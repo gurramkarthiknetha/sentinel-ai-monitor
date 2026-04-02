@@ -14,22 +14,44 @@ import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
 import {
-  Monitor,
+  ClipboardList,
+  Gauge,
   AlertTriangle,
+  Monitor,
   Map,
-  BarChart3,
+  Scale,
   ShieldCheck,
   User,
   LogOut,
 } from "lucide-react";
+import type { UserRole } from "@/store/auth";
 
-const navItems = [
-  { title: "Overview", url: "/", icon: BarChart3, roles: ['admin', 'operator', 'responder'] },
-  { title: "Monitoring", url: "/monitoring", icon: Monitor, roles: ['admin', 'operator'] },
-  { title: "Incidents", url: "/incidents", icon: AlertTriangle, roles: ['admin', 'operator', 'responder'] },
-  { title: "Zone Map", url: "/map", icon: Map, roles: ['admin', 'operator'] },
-  { title: "User Approvals", url: "/admin/users", icon: ShieldCheck, roles: ['admin'] },
-];
+interface NavItem {
+  title: string;
+  url: string;
+  icon: typeof Gauge;
+}
+
+const NAV_ITEMS_BY_ROLE: Record<UserRole, NavItem[]> = {
+  admin: [
+    { title: "Overview", url: "/", icon: Gauge },
+    { title: "Incidents", url: "/incidents", icon: AlertTriangle },
+    { title: "Decision Oversight", url: "/admin/oversight", icon: Scale },
+    { title: "Audit Logs", url: "/admin/logs", icon: ClipboardList },
+    { title: "User Approvals", url: "/admin/users", icon: ShieldCheck },
+    { title: "Zone Map", url: "/map", icon: Map },
+  ],
+  operator: [
+    { title: "Overview", url: "/", icon: Gauge },
+    { title: "Monitoring", url: "/monitoring", icon: Monitor },
+    { title: "Incidents", url: "/incidents", icon: AlertTriangle },
+    { title: "Zone Map", url: "/map", icon: Map },
+  ],
+  responder: [
+    { title: "Overview", url: "/", icon: Gauge },
+    { title: "Incidents", url: "/incidents", icon: AlertTriangle },
+  ],
+};
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -43,9 +65,7 @@ export function AppSidebar() {
     navigate('/login', { replace: true });
   };
 
-  const filteredItems = navItems.filter((item) =>
-    user ? item.roles.includes(user.role) : false
-  );
+  const navItems = user ? NAV_ITEMS_BY_ROLE[user.role] : [];
 
   return (
     <Sidebar collapsible="icon">
@@ -56,7 +76,7 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {filteredItems.map((item) => (
+              {navItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild>
                     <NavLink

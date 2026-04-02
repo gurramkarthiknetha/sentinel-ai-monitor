@@ -8,7 +8,9 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { getCurrentUser } from "@/lib/authApi";
 import { useAuthStore, type UserRole } from "@/store/auth";
 import AdminUsers from "@/pages/AdminUsers";
+import AuditLogs from "@/pages/AuditLogs";
 import Auth from "@/pages/Auth";
+import DecisionOversight from "@/pages/DecisionOversight";
 import Overview from "@/pages/Overview";
 import Monitoring from "@/pages/Monitoring";
 import Incidents from "@/pages/Incidents";
@@ -114,12 +116,17 @@ const AppRoutes = () => {
           <Route path="/" element={<Overview />} />
           <Route path="/incidents" element={<Incidents />} />
 
-          <Route element={<RequireRole allowedRoles={["admin", "operator"]} />}>
+          <Route element={<RequireRole allowedRoles={["operator"]} />}>
             <Route path="/monitoring" element={<Monitoring />} />
+          </Route>
+
+          <Route element={<RequireRole allowedRoles={["admin", "operator"]} />}>
             <Route path="/map" element={<ZoneMap />} />
           </Route>
 
           <Route element={<RequireRole allowedRoles={["admin"]} />}>
+            <Route path="/admin/oversight" element={<DecisionOversight />} />
+            <Route path="/admin/logs" element={<AuditLogs />} />
             <Route path="/admin/users" element={<AdminUsers />} />
           </Route>
 

@@ -17,6 +17,8 @@ export interface Incident {
   assignedTo?: string;
   notes: string[];
   resolvedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Detection {
