@@ -406,11 +406,11 @@ def run_prediction(
     model: RTDETR,
     frame,
     args: argparse.Namespace,
-    person_only: bool,
+    detect_all_classes: bool,
     person_class_id: int,
 ):
     device = None if str(args.device).strip().lower() == "auto" else str(args.device).strip()
-    classes = [int(person_class_id)] if person_only else None
+    classes = None if detect_all_classes else [int(person_class_id)]
 
     results = model.predict(
         source=frame,
@@ -434,7 +434,7 @@ def parse_detections(
     result,
     frame_shape: Sequence[int],
     score_threshold: float,
-    person_only: bool,
+    detect_all_classes: bool,
     person_class_id: int,
     min_box_area_ratio: float,
     max_box_area_ratio: float,
@@ -469,7 +469,7 @@ def parse_detections(
         if confidence < float(score_threshold):
             continue
 
-        if person_only and class_id != int(person_class_id):
+        if (not detect_all_classes) and class_id != int(person_class_id):
             continue
 
         bbox_xyxy = to_pixel_bbox(x1, y1, x2, y2, frame_w, frame_h)
@@ -676,16 +676,18 @@ def main() -> int:
     model = RTDETR(model_path)
     label_map = get_label_map(model)
 
-    person_only = not args.all_classes
-    person_class_id = guess_person_class_id(label_map, int(args.person_class_id))
+    detect_all_classes = bool(args.all_classes)
+    person_class_id = int(args.person_class_id)
+    if not detect_all_classes:
+        person_class_id = guess_person_class_id(label_map, person_class_id)
 
     LOGGER.info(
-        "Runtime config: source=%s input=%s threshold=%.4f iou=%.4f person_only=%s person_class_id=%s device=%s",
+        "Runtime config: source=%s input=%s threshold=%.4f iou=%.4f detect_all_classes=%s person_class_id=%s device=%s",
         resolved_source,
         args.input_size,
         args.score_threshold,
         args.iou_threshold,
-        person_only,
+        detect_all_classes,
         person_class_id,
         args.device,
     )
@@ -734,7 +736,7 @@ def main() -> int:
                     model=model,
                     frame=frame,
                     args=args,
-                    person_only=person_only,
+                    detect_all_classes=detect_all_classes,
                     person_class_id=person_class_id,
                 )
 
@@ -743,7 +745,7 @@ def main() -> int:
                         result=result,
                         frame_shape=frame.shape[:2],
                         score_threshold=float(args.score_threshold),
-                        person_only=person_only,
+                        detect_all_classes=detect_all_classes,
                         person_class_id=person_class_id,
                         min_box_area_ratio=float(args.min_box_area_ratio),
                         max_box_area_ratio=float(args.max_box_area_ratio),
