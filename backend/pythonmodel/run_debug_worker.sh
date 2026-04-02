@@ -8,6 +8,7 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:6226/api}"
 MIN_BOX_AREA_RATIO="${RTDETR_MIN_BOX_AREA_RATIO:-0.0005}"
 MAX_BOX_AREA_RATIO="${RTDETR_MAX_BOX_AREA_RATIO:-0.90}"
 EXCLUDE_CLASS_IDS="${RTDETR_EXCLUDE_CLASS_IDS:-}"
+WORKER_API_KEY="${WORKER_API_KEY:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -111,7 +112,12 @@ else
   MODEL_PATH="$(cd "$(dirname "$MODEL_PATH")" && pwd)/$(basename "$MODEL_PATH")"
 fi
 
-CAMERA_JSON="$(curl -s "$API_BASE_URL/cameras")"
+curl_args=(-s)
+if [[ -n "$WORKER_API_KEY" ]]; then
+  curl_args+=(-H "x-worker-key: $WORKER_API_KEY")
+fi
+
+CAMERA_JSON="$(curl "${curl_args[@]}" "$API_BASE_URL/cameras")"
 DEFAULT_CAMERA_ID="$($PYTHON_BIN - <<'PY'
 import json
 import sys
@@ -135,7 +141,7 @@ if [[ -z "$CAMERA_ID" ]]; then
 fi
 
 if [[ "$SOURCE" == "auto" ]]; then
-  CAMERA_SOURCE_JSON="$(curl -s "$API_BASE_URL/cameras/$CAMERA_ID")"
+  CAMERA_SOURCE_JSON="$(curl "${curl_args[@]}" "$API_BASE_URL/cameras/$CAMERA_ID")"
   SOURCE="$($PYTHON_BIN - <<'PY'
 import json
 import sys
@@ -227,6 +233,10 @@ action_cmd=(
 
 if [[ -n "$EXCLUDE_CLASS_IDS" ]]; then
   action_cmd+=(--exclude-class-ids "$EXCLUDE_CLASS_IDS")
+fi
+
+if [[ -n "$WORKER_API_KEY" ]]; then
+  action_cmd+=(--worker-api-key "$WORKER_API_KEY")
 fi
 
 printf 'Running: %q ' "${action_cmd[@]}"

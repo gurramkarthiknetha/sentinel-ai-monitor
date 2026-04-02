@@ -84,6 +84,11 @@ def parse_args() -> argparse.Namespace:
         default="http://localhost:6226/api",
         help="Backend API base URL",
     )
+    parser.add_argument(
+        "--worker-api-key",
+        default="",
+        help="Optional shared key sent as x-worker-key header",
+    )
 
     parser.add_argument(
         "--input-size",
@@ -660,6 +665,9 @@ def main() -> int:
     model_path = validate_model_path(args.model_path)
 
     session = requests.Session()
+    worker_api_key = str(args.worker_api_key or "").strip()
+    if worker_api_key:
+        session.headers.update({"x-worker-key": worker_api_key})
 
     source_value = args.source.strip()
     if source_value.lower() in ("auto", "camera:auto"):

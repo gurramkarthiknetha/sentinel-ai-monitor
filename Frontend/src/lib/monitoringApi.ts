@@ -4,6 +4,7 @@ import type {
   CreateCameraInput,
   DetectionBox,
 } from "@/types/monitoring";
+import { getAuthToken, useAuthStore } from "@/store/auth";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -30,18 +31,33 @@ const getApiBaseUrl = () => {
 };
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
+  const token = getAuthToken();
+
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options?.headers || {}),
     },
     ...options,
   });
 
-  const payload = (await response.json()) as ApiEnvelope<T> | { message?: string };
+  const payload = (await response.json().catch(() => ({}))) as
+    | ApiEnvelope<T>
+    | { message?: string; code?: string };
 
   if (!response.ok) {
-    throw new Error(payload.message || "Request failed");
+    if (response.status === 401) {
+      useAuthStore.getState().clearSession();
+    }
+
+    const payloadCode =
+      payload && typeof payload === "object" && "code" in payload ? payload.code : undefined;
+
+    const error = new Error(payload.message || "Request failed");
+    (error as Error & { code?: string }).code =
+      typeof payloadCode === "string" ? payloadCode : undefined;
+    throw error;
   }
 
   if (!("data" in payload)) {

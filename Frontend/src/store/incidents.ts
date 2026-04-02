@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type IncidentType = 'fire' | 'crowd' | 'medical' | 'security';
+export type IncidentType = 'fire' | 'crowd' | 'medical' | 'security' | 'inactivity';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type IncidentStatus = 'active' | 'assigned' | 'in_progress' | 'resolved';
 

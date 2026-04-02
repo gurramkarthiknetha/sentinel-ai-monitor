@@ -1,8 +1,11 @@
 import Incident from "../models/Incident.js";
+import {
+  INCIDENT_SEVERITY_SET,
+  INCIDENT_STATUS_SET,
+  INCIDENT_TYPE_SET,
+  getAllowedIncidentTypesForResponder,
+} from "../constants/auth.js";
 
-const INCIDENT_TYPES = new Set(["fire", "crowd", "medical", "security"]);
-const INCIDENT_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
-const INCIDENT_STATUSES = new Set(["active", "assigned", "in_progress", "resolved"]);
 const DEFAULT_LOCATION_CENTER = { lat: 40.7128, lng: -74.006 };
 
 const parseFiniteNumber = (value) => {
@@ -84,15 +87,32 @@ export const getIncidents = async (req, res, next) => {
 
     const filter = {};
 
-    if (typeof type === "string" && INCIDENT_TYPES.has(type)) {
+    if (req.authUser?.role === "responder") {
+      const allowedTypes = getAllowedIncidentTypesForResponder(req.authUser.responderType);
+
+      if (allowedTypes.length === 0) {
+        return res.json({ success: true, data: [] });
+      }
+
+      if (typeof type === "string" && INCIDENT_TYPE_SET.has(type)) {
+        if (!allowedTypes.includes(type)) {
+          return res.json({ success: true, data: [] });
+        }
+        filter.type = type;
+      } else {
+        filter.type = { $in: allowedTypes };
+      }
+    }
+
+    if (req.authUser?.role !== "responder" && typeof type === "string" && INCIDENT_TYPE_SET.has(type)) {
       filter.type = type;
     }
 
-    if (typeof severity === "string" && INCIDENT_SEVERITIES.has(severity)) {
+    if (typeof severity === "string" && INCIDENT_SEVERITY_SET.has(severity)) {
       filter.severity = severity;
     }
 
-    if (typeof status === "string" && INCIDENT_STATUSES.has(status)) {
+    if (typeof status === "string" && INCIDENT_STATUS_SET.has(status)) {
       filter.status = status;
     }
 
@@ -125,15 +145,15 @@ export const createIncident = async (req, res, next) => {
       resolvedAt,
     } = req.body;
 
-    if (!INCIDENT_TYPES.has(type)) {
-      return res.status(400).json({ message: "type must be fire, crowd, medical, or security" });
+    if (!INCIDENT_TYPE_SET.has(type)) {
+      return res.status(400).json({ message: "type must be fire, crowd, medical, security, or inactivity" });
     }
 
-    if (!INCIDENT_SEVERITIES.has(severity)) {
+    if (!INCIDENT_SEVERITY_SET.has(severity)) {
       return res.status(400).json({ message: "severity must be low, medium, high, or critical" });
     }
 
-    if (!INCIDENT_STATUSES.has(status)) {
+    if (!INCIDENT_STATUS_SET.has(status)) {
       return res
         .status(400)
         .json({ message: "status must be active, assigned, in_progress, or resolved" });
@@ -213,25 +233,46 @@ export const updateIncidentById = async (req, res, next) => {
       return res.status(400).json({ message: "incidentId is required" });
     }
 
+    const incident = await Incident.findOne({ id: incidentId });
+    if (!incident) {
+      return res.status(404).json({ message: "Incident not found" });
+    }
+
+    const responderAllowedTypes =
+      req.authUser?.role === "responder"
+        ? getAllowedIncidentTypesForResponder(req.authUser.responderType)
+        : null;
+
+    if (Array.isArray(responderAllowedTypes)) {
+      if (responderAllowedTypes.length === 0 || !responderAllowedTypes.includes(incident.type)) {
+        return res.status(403).json({ message: "Responder access is limited to assigned alert type" });
+      }
+    }
+
     const updates = {};
     const payload = req.body || {};
 
     if (payload.type !== undefined) {
-      if (!INCIDENT_TYPES.has(payload.type)) {
+      if (!INCIDENT_TYPE_SET.has(payload.type)) {
         return res.status(400).json({ message: "Invalid type value" });
       }
+
+      if (Array.isArray(responderAllowedTypes) && !responderAllowedTypes.includes(payload.type)) {
+        return res.status(403).json({ message: "Responder access is limited to assigned alert type" });
+      }
+
       updates.type = payload.type;
     }
 
     if (payload.severity !== undefined) {
-      if (!INCIDENT_SEVERITIES.has(payload.severity)) {
+      if (!INCIDENT_SEVERITY_SET.has(payload.severity)) {
         return res.status(400).json({ message: "Invalid severity value" });
       }
       updates.severity = payload.severity;
     }
 
     if (payload.status !== undefined) {
-      if (!INCIDENT_STATUSES.has(payload.status)) {
+      if (!INCIDENT_STATUS_SET.has(payload.status)) {
         return res.status(400).json({ message: "Invalid status value" });
       }
       updates.status = payload.status;
@@ -307,15 +348,8 @@ export const updateIncidentById = async (req, res, next) => {
       }
     }
 
-    const incident = await Incident.findOneAndUpdate(
-      { id: incidentId },
-      { $set: updates },
-      { new: true, runValidators: true },
-    );
-
-    if (!incident) {
-      return res.status(404).json({ message: "Incident not found" });
-    }
+    Object.assign(incident, updates);
+    await incident.save();
 
     return res.json({ success: true, data: incident });
   } catch (error) {

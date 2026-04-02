@@ -28,7 +28,7 @@ const incidentSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["fire", "crowd", "medical", "security"],
+      enum: ["fire", "crowd", "medical", "security", "inactivity"],
       required: true,
     },
     severity: {

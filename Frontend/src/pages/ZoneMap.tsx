@@ -15,6 +15,7 @@ const TYPE_LABELS: Record<IncidentType, string> = {
   crowd: "👥",
   medical: "🏥",
   security: "🛡️",
+  inactivity: "🧍",
 };
 
 const SEVERITY_RADIUS_METERS: Record<Severity, number> = {

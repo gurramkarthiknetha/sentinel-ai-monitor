@@ -10,11 +10,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Flame, Users, HeartPulse, Shield, Plus, Search, Clock, ArrowRight } from "lucide-react";
+import { useAuthStore } from "@/store/auth";
+import { Flame, Users, HeartPulse, Shield, Plus, Search, Clock, ArrowRight, PersonStanding } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const TYPE_ICONS: Record<IncidentType, React.ElementType> = {
-  fire: Flame, crowd: Users, medical: HeartPulse, security: Shield,
+  fire: Flame, crowd: Users, medical: HeartPulse, security: Shield, inactivity: PersonStanding,
 };
 
 const SEVERITY_COLORS: Record<Severity, string> = {
@@ -40,6 +41,7 @@ const NEXT_STATUS: Record<IncidentStatus, IncidentStatus | null> = {
 
 export default function IncidentsPage() {
   const { toast } = useToast();
+  const currentUser = useAuthStore((state) => state.user);
   const { incidents, setIncidents, updateIncident, addIncident } = useIncidentStore();
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
@@ -49,6 +51,8 @@ export default function IncidentsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+  const canCreateIncidents = currentUser?.role === "admin" || currentUser?.role === "operator";
+  const canAdvanceIncidentStatus = Boolean(currentUser);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,57 +160,64 @@ export default function IncidentsPage() {
           <h1 className="text-2xl font-heading font-bold tracking-tight">Incidents</h1>
           <p className="text-muted-foreground text-sm mt-1">{filtered.length} incidents found</p>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button className="gap-2">
-              <Plus className="h-4 w-4" /> New Incident
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="bg-card border-border">
-            <DialogHeader>
-              <DialogTitle className="font-heading">Create Incident</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Type</Label>
-                  <Select name="type" defaultValue="security">
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="fire">Fire</SelectItem>
-                      <SelectItem value="crowd">Crowd</SelectItem>
-                      <SelectItem value="medical">Medical</SelectItem>
-                      <SelectItem value="security">Security</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Severity</Label>
-                  <Select name="severity" defaultValue="medium">
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
-                      <SelectItem value="critical">Critical</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Zone</Label>
-                <Input name="zone" placeholder="e.g. Main Stage" required />
-              </div>
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <Textarea name="description" placeholder="Describe the incident..." required />
-              </div>
-              <Button type="submit" className="w-full" disabled={isSubmittingCreate}>
-                {isSubmittingCreate ? "Creating..." : "Create Incident"}
+        {canCreateIncidents ? (
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" /> New Incident
               </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent className="bg-card border-border">
+              <DialogHeader>
+                <DialogTitle className="font-heading">Create Incident</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleCreate} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Type</Label>
+                    <Select name="type" defaultValue="security">
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fire">Fire</SelectItem>
+                        <SelectItem value="crowd">Crowd</SelectItem>
+                        <SelectItem value="medical">Medical</SelectItem>
+                        <SelectItem value="security">Security</SelectItem>
+                        <SelectItem value="inactivity">Inactivity</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Severity</Label>
+                    <Select name="severity" defaultValue="medium">
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="critical">Critical</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Zone</Label>
+                  <Input name="zone" placeholder="e.g. Main Stage" required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Description</Label>
+                  <Textarea name="description" placeholder="Describe the incident..." required />
+                </div>
+                <Button type="submit" className="w-full" disabled={isSubmittingCreate}>
+                  {isSubmittingCreate ? "Creating..." : "Create Incident"}
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+        ) : (
+          <Badge variant="outline" className="border-primary/40 text-primary">
+            Incident creation is limited to Admin/Operator
+          </Badge>
+        )}
       </div>
 
       {/* Filters */}
@@ -228,6 +239,7 @@ export default function IncidentsPage() {
             <SelectItem value="crowd">Crowd</SelectItem>
             <SelectItem value="medical">Medical</SelectItem>
             <SelectItem value="security">Security</SelectItem>
+            <SelectItem value="inactivity">Inactivity</SelectItem>
           </SelectContent>
         </Select>
         <Select value={filterSeverity} onValueChange={setFilterSeverity}>
@@ -297,7 +309,7 @@ export default function IncidentsPage() {
                         <span>{(inc.confidence * 100).toFixed(0)}% confidence</span>
                       </div>
                     </div>
-                    {NEXT_STATUS[inc.status] && (
+                    {canAdvanceIncidentStatus && NEXT_STATUS[inc.status] && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -358,7 +370,7 @@ export default function IncidentsPage() {
                     ))}
                   </div>
                 )}
-                {NEXT_STATUS[selectedIncident.status] && (
+                {canAdvanceIncidentStatus && NEXT_STATUS[selectedIncident.status] && (
                   <Button
                     className="w-full gap-2"
                     disabled={statusUpdatingId === selectedIncident.id}

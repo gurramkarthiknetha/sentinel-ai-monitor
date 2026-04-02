@@ -5,7 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, CartesianGrid,
 } from "recharts";
-import { AlertTriangle, Flame, Users, HeartPulse, Shield, Clock, TrendingUp, Activity } from "lucide-react";
+import { AlertTriangle, Flame, Users, HeartPulse, Shield, Clock, Activity, PersonStanding } from "lucide-react";
 import { motion } from "framer-motion";
 
 const SEVERITY_COLORS: Record<Severity, string> = {
@@ -20,6 +20,7 @@ const TYPE_ICONS: Record<IncidentType, React.ElementType> = {
   crowd: Users,
   medical: HeartPulse,
   security: Shield,
+  inactivity: PersonStanding,
 };
 
 const TYPE_COLORS: Record<IncidentType, string> = {
@@ -27,6 +28,7 @@ const TYPE_COLORS: Record<IncidentType, string> = {
   crowd: 'hsl(38, 92%, 50%)',
   medical: 'hsl(200, 80%, 50%)',
   security: 'hsl(280, 60%, 55%)',
+  inactivity: 'hsl(188, 95%, 42%)',
 };
 
 export default function OverviewPage() {
@@ -37,7 +39,7 @@ export default function OverviewPage() {
   const critical = incidents.filter((i) => i.severity === 'critical').length;
   const resolved = incidents.filter((i) => i.status === 'resolved').length;
 
-  const byType = (['fire', 'crowd', 'medical', 'security'] as IncidentType[]).map((type) => ({
+  const byType = (['fire', 'crowd', 'medical', 'security', 'inactivity'] as IncidentType[]).map((type) => ({
     name: type,
     value: incidents.filter((i) => i.type === type).length,
     color: TYPE_COLORS[type],

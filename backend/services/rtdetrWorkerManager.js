@@ -230,6 +230,10 @@ const buildWorkerArgs = (camera) => {
 		args.push("--debug-log-payload");
 	}
 
+	if (env.WORKER_API_KEY) {
+		args.push("--worker-api-key", env.WORKER_API_KEY);
+	}
+
 	return args;
 };
 

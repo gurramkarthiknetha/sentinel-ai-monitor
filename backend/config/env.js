@@ -74,6 +74,17 @@ const parseOrigins = (value) =>
     .map((origin) => origin.trim())
     .filter(Boolean);
 
+const parseCsvValues = (value) => {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return [];
+  }
+
+  return String(value)
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+};
+
 const parseIntListWithDefault = (value, defaultValue = []) => {
   if (value === undefined || value === null || String(value).trim() === "") {
     return defaultValue;
@@ -91,6 +102,8 @@ const PORT = parsePositiveInt(process.env.PORT, "PORT");
 const API_PREFIX = process.env.API_PREFIX;
 
 const defaultApiBaseUrl = `http://127.0.0.1:${PORT}${API_PREFIX}`;
+const adminEmailsRaw =
+  process.env.ADMINS !== undefined ? process.env.ADMINS : process.env.ADMIN_BOOTSTRAP_EMAILS;
 
 export const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
@@ -107,6 +120,15 @@ export const env = {
     "CAMERA_OFFLINE_CHECK_INTERVAL_SECONDS",
   ),
   JSON_BODY_LIMIT: process.env.JSON_BODY_LIMIT,
+
+  GOOGLE_CLIENT_ID: String(process.env.GOOGLE_CLIENT_ID || "").trim(),
+  GOOGLE_CLIENT_SECRET: String(process.env.GOOGLE_CLIENT_SECRET || "").trim(),
+  JWT_SECRET: String(process.env.JWT_SECRET || "").trim(),
+  JWT_EXPIRES_IN: String(process.env.JWT_EXPIRES_IN || "7d").trim(),
+  ADMIN_EMAILS: parseCsvValues(adminEmailsRaw).map((email) => email.toLowerCase()),
+  // Legacy alias kept for backwards compatibility with older config references.
+  ADMIN_BOOTSTRAP_EMAILS: parseCsvValues(adminEmailsRaw).map((email) => email.toLowerCase()),
+  WORKER_API_KEY: String(process.env.WORKER_API_KEY || "").trim(),
 
   RTDETR_WORKER_ENABLED: parseBooleanWithDefault(process.env.RTDETR_WORKER_ENABLED, true),
   RTDETR_AUTO_START_ON_BOOT: parseBooleanWithDefault(process.env.RTDETR_AUTO_START_ON_BOOT, true),

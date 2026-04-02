@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 import morgan from "morgan";
+import authRoutes from "./routes/authRoutes.js";
 import cameraRoutes from "./routes/cameraRoutes.js";
 import detectionRoutes from "./routes/detectionRoutes.js";
 import incidentRoutes from "./routes/incidentRoutes.js";
@@ -36,6 +37,7 @@ export const createApp = () => {
     });
   });
 
+  app.use(`${env.API_PREFIX}/auth`, authRoutes);
   app.use(`${env.API_PREFIX}/cameras`, cameraRoutes);
   app.use(`${env.API_PREFIX}/detections`, detectionRoutes);
   app.use(`${env.API_PREFIX}/incidents`, incidentRoutes);
