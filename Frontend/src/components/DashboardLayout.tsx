@@ -1,13 +1,37 @@
+import { useEffect } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Bell } from "lucide-react";
 import { useIncidentStore } from "@/store/incidents";
+import { getIncidents } from "@/lib/incidentsApi";
 import { Badge } from "@/components/ui/badge";
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const setIncidents = useIncidentStore((s) => s.setIncidents);
   const activeCount = useIncidentStore((s) =>
     s.incidents.filter((i) => i.status === "active").length
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadIncidents = async () => {
+      try {
+        const incidents = await getIncidents();
+        if (!cancelled) {
+          setIncidents(incidents);
+        }
+      } catch (error) {
+        console.error("Failed to fetch incidents:", error);
+      }
+    };
+
+    void loadIncidents();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setIncidents]);
 
   return (
     <SidebarProvider>

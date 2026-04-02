@@ -7,6 +7,7 @@ export interface CameraEntity {
   sourceType?: CameraSourceType;
   rtspUrl: string;
   deviceId?: string;
+  deviceIndex?: number;
   location?: string;
   status: CameraStatus;
   lastActive?: string;
@@ -44,5 +45,6 @@ export interface CreateCameraInput {
   sourceType?: CameraSourceType;
   rtspUrl?: string;
   deviceId?: string;
+  deviceIndex?: number;
   location?: string;
 }

@@ -3,6 +3,7 @@ import express from "express";
 import morgan from "morgan";
 import cameraRoutes from "./routes/cameraRoutes.js";
 import detectionRoutes from "./routes/detectionRoutes.js";
+import incidentRoutes from "./routes/incidentRoutes.js";
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middlewares/errorHandler.js";
 
@@ -37,6 +38,7 @@ export const createApp = () => {
 
   app.use(`${env.API_PREFIX}/cameras`, cameraRoutes);
   app.use(`${env.API_PREFIX}/detections`, detectionRoutes);
+  app.use(`${env.API_PREFIX}/incidents`, incidentRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

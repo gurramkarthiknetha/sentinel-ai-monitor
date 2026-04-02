@@ -1,4 +1,5 @@
 import Camera from "../models/Camera.js";
+import { stopWorkerForCamera } from "./rtdetrWorkerManager.js";
 
 export const startCameraStatusMonitor = ({
   io,
@@ -26,6 +27,19 @@ export const startCameraStatusMonitor = ({
           status: "OFFLINE",
         },
       },
+    );
+
+    await Promise.all(
+      staleCameras.map(async (camera) => {
+        try {
+          await stopWorkerForCamera(camera._id.toString(), { reason: "offline-timeout" });
+        } catch (error) {
+          console.error(
+            `[camera-status-monitor] Failed to stop worker for camera=${camera._id}:`,
+            error.message,
+          );
+        }
+      }),
     );
 
     for (const camera of staleCameras) {

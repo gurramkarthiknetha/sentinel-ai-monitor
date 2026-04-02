@@ -1,6 +1,6 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Camera, Plus, RefreshCcw, Trash2, Wifi, WifiOff } from "lucide-react";
+import { Camera, Maximize2, Plus, RefreshCcw, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { addCamera, deleteCamera, getCameras, updateCameraStatus } from "@/lib/monitoringApi";
 import { createMonitoringSocket } from "@/lib/monitoringSocket";
+import { cn } from "@/lib/utils";
 import type {
   CameraDeletedEvent,
   CameraEntity,
@@ -92,7 +93,7 @@ interface BrowserVideoDevice {
   label: string;
 }
 
-function SystemCameraStream({ deviceId }: { deviceId?: string }) {
+const SystemCameraStream = memo(function SystemCameraStream({ deviceId }: { deviceId?: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,9 +150,9 @@ function SystemCameraStream({ deviceId }: { deviceId?: string }) {
   }
 
   return <video ref={videoRef} className="absolute inset-0 h-full w-full object-cover" autoPlay muted playsInline />;
-}
+});
 
-function CameraViewport({
+const CameraViewport = memo(function CameraViewport({
   camera,
   liveDetections,
 }: {
@@ -220,7 +221,7 @@ function CameraViewport({
       )}
     </div>
   );
-}
+});
 
 export default function MonitoringPage() {
   const { toast } = useToast();
@@ -237,6 +238,9 @@ export default function MonitoringPage() {
   const [isLoadingSystemDevices, setIsLoadingSystemDevices] = useState(false);
   const [deletingCameraId, setDeletingCameraId] = useState<string | null>(null);
   const [updatingStatusCameraId, setUpdatingStatusCameraId] = useState<string | null>(null);
+  const [focusedCameraId, setFocusedCameraId] = useState<string | null>(null);
+
+  const isFocusOpen = focusedCameraId !== null;
 
   const onlineCount = useMemo(
     () => cameras.filter((camera) => camera.status === "ONLINE").length,
@@ -261,6 +265,34 @@ export default function MonitoringPage() {
   useEffect(() => {
     void fetchCameraList();
   }, [fetchCameraList]);
+
+  useEffect(() => {
+    if (!focusedCameraId) {
+      return;
+    }
+
+    const stillExists = cameras.some((camera) => camera._id === focusedCameraId);
+    if (!stillExists) {
+      setFocusedCameraId(null);
+    }
+  }, [cameras, focusedCameraId]);
+
+  useEffect(() => {
+    if (!focusedCameraId) {
+      return;
+    }
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setFocusedCameraId(null);
+      }
+    };
+
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [focusedCameraId]);
 
   const loadSystemCameraDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices || !navigator.mediaDevices?.getUserMedia) {
@@ -400,6 +432,7 @@ export default function MonitoringPage() {
       }
 
       setCameras((current) => current.filter((camera) => camera._id !== payload.cameraId));
+      setFocusedCameraId((current) => (current === payload.cameraId ? null : current));
       setLiveDetections((current) => {
         const next = { ...current };
         delete next[payload.cameraId];
@@ -529,6 +562,7 @@ export default function MonitoringPage() {
         delete next[camera._id];
         return next;
       });
+      setFocusedCameraId((current) => (current === camera._id ? null : current));
 
       toast({
         title: "Camera deleted",
@@ -736,21 +770,81 @@ export default function MonitoringPage() {
         </Card>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {isFocusOpen ? (
+        <button
+          type="button"
+          aria-label="Close expanded camera view"
+          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm transition-opacity duration-300"
+          onClick={() => setFocusedCameraId(null)}
+        />
+      ) : null}
+
+      <div className="relative grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {cameras.map((camera, index) => {
           const overlay = liveDetections[camera._id];
           const sourceType = camera.sourceType || "RTSP";
+          const isFocused = focusedCameraId === camera._id;
+          const dimmed = isFocusOpen && !isFocused;
 
           return (
             <motion.div
               key={camera._id}
+              layout
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.05 }}
+              className={cn(
+                "relative transition-all duration-300",
+                dimmed && "pointer-events-none opacity-25 blur-[2px]",
+                isFocused && "fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6",
+              )}
             >
-              <Card className="overflow-hidden border-border bg-card">
-                <div className="p-3 pb-0">
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  if (!isFocused) {
+                    setFocusedCameraId(camera._id);
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if ((event.key === "Enter" || event.key === " ") && !isFocused) {
+                    event.preventDefault();
+                    setFocusedCameraId(camera._id);
+                  }
+
+                  if (event.key === "Escape" && isFocused) {
+                    event.stopPropagation();
+                    setFocusedCameraId(null);
+                  }
+                }}
+                className={cn(
+                  "overflow-hidden border-border bg-card transition-all duration-300",
+                  !isFocused && "cursor-zoom-in hover:border-primary/50",
+                  isFocused && "w-full max-w-6xl cursor-default border-primary/60 shadow-2xl",
+                )}
+              >
+                <div className="relative p-3 pb-0">
                   <CameraViewport camera={camera} liveDetections={overlay} />
+
+                  {isFocused ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="absolute right-6 top-6 z-10"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setFocusedCameraId(null);
+                      }}
+                    >
+                      <X className="mr-1.5 h-4 w-4" /> Close
+                    </Button>
+                  ) : (
+                    <div className="pointer-events-none absolute right-6 top-6 z-10 inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                      <Maximize2 className="h-3 w-3" /> Focus
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2 p-3">
@@ -788,7 +882,10 @@ export default function MonitoringPage() {
                         size="sm"
                         className="h-7 border-success/40 px-2 text-[11px] text-success hover:bg-success/10 hover:text-success"
                         disabled={updatingStatusCameraId !== null || deletingCameraId !== null}
-                        onClick={() => void onSetCameraOnline(camera)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onSetCameraOnline(camera);
+                        }}
                       >
                         {updatingStatusCameraId === camera._id ? "Bringing Online..." : "Go Online"}
                       </Button>
@@ -800,7 +897,10 @@ export default function MonitoringPage() {
                       size="sm"
                       className="h-7 px-2 text-[11px]"
                       disabled={deletingCameraId !== null || updatingStatusCameraId !== null}
-                      onClick={() => void onDeleteCamera(camera)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void onDeleteCamera(camera);
+                      }}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       {deletingCameraId === camera._id ? "Deleting..." : "Delete"}

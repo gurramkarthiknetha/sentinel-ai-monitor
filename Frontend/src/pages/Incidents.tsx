@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useIncidentStore, type Incident, type IncidentType, type Severity, type IncidentStatus } from "@/store/incidents";
+import { createIncident, getIncidents, updateIncidentById } from "@/lib/incidentsApi";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 import { Flame, Users, HeartPulse, Shield, Plus, Search, Clock, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -37,13 +39,43 @@ const NEXT_STATUS: Record<IncidentStatus, IncidentStatus | null> = {
 };
 
 export default function IncidentsPage() {
-  const { incidents, updateIncident, addIncident } = useIncidentStore();
+  const { toast } = useToast();
+  const { incidents, setIncidents, updateIncident, addIncident } = useIncidentStore();
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
+  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshIncidents = async () => {
+      try {
+        const latest = await getIncidents();
+        if (!cancelled) {
+          setIncidents(latest);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast({
+            title: "Failed to refresh incidents",
+            description: error instanceof Error ? error.message : "Unexpected error",
+            variant: "destructive",
+          });
+        }
+      }
+    };
+
+    void refreshIncidents();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setIncidents, toast]);
 
   const filtered = incidents.filter((inc) => {
     if (search && !inc.id.toLowerCase().includes(search.toLowerCase()) && !inc.description.toLowerCase().includes(search.toLowerCase())) return false;
@@ -53,33 +85,67 @@ export default function IncidentsPage() {
     return true;
   });
 
-  const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleCreate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
-    const newIncident: Incident = {
-      id: `INC-${String(incidents.length + 1).padStart(4, '0')}`,
+
+    const payload = {
       type: data.get('type') as IncidentType,
       severity: data.get('severity') as Severity,
-      status: 'active',
+      status: 'active' as IncidentStatus,
       confidence: 1.0,
-      timestamp: new Date().toISOString(),
-      zone: data.get('zone') as string,
-      location: { lat: 40.7128 + (Math.random() - 0.5) * 0.01, lng: -74.006 + (Math.random() - 0.5) * 0.01 },
-      description: data.get('description') as string,
+      zone: String(data.get('zone') || '').trim(),
+      description: String(data.get('description') || '').trim(),
+      // Preserve existing UX behavior for optional location input.
+      location: {
+        lat: 40.7128 + (Math.random() - 0.5) * 0.01,
+        lng: -74.006 + (Math.random() - 0.5) * 0.01,
+      },
       notes: [],
     };
-    addIncident(newIncident);
-    setCreateOpen(false);
+
+    try {
+      setIsSubmittingCreate(true);
+      const createdIncident = await createIncident(payload);
+      addIncident(createdIncident);
+      setCreateOpen(false);
+      toast({
+        title: "Incident created",
+        description: `${createdIncident.id} has been saved to database`,
+      });
+    } catch (error) {
+      toast({
+        title: "Failed to create incident",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmittingCreate(false);
+    }
   };
 
-  const advanceStatus = (inc: Incident) => {
+  const advanceStatus = async (inc: Incident) => {
     const next = NEXT_STATUS[inc.status];
     if (next) {
-      updateIncident(inc.id, {
-        status: next,
-        ...(next === 'assigned' ? { assignedTo: 'Current User' } : {}),
-        ...(next === 'resolved' ? { resolvedAt: new Date().toISOString() } : {}),
-      });
+      try {
+        setStatusUpdatingId(inc.id);
+
+        const updatedIncident = await updateIncidentById(inc.id, {
+          status: next,
+          ...(next === 'assigned' ? { assignedTo: 'Current User' } : {}),
+          ...(next === 'resolved' ? { resolvedAt: new Date().toISOString() } : {}),
+        });
+
+        updateIncident(inc.id, updatedIncident);
+      } catch (error) {
+        toast({
+          title: "Failed to update status",
+          description: error instanceof Error ? error.message : "Unexpected error",
+          variant: "destructive",
+        });
+      } finally {
+        setStatusUpdatingId(null);
+      }
     }
   };
 
@@ -135,7 +201,9 @@ export default function IncidentsPage() {
                 <Label>Description</Label>
                 <Textarea name="description" placeholder="Describe the incident..." required />
               </div>
-              <Button type="submit" className="w-full">Create Incident</Button>
+              <Button type="submit" className="w-full" disabled={isSubmittingCreate}>
+                {isSubmittingCreate ? "Creating..." : "Create Incident"}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -234,12 +302,16 @@ export default function IncidentsPage() {
                         size="sm"
                         variant="outline"
                         className="gap-1 text-xs"
+                        disabled={statusUpdatingId === inc.id}
                         onClick={(e) => {
                           e.stopPropagation();
-                          advanceStatus(inc);
+                          void advanceStatus(inc);
                         }}
                       >
-                        {NEXT_STATUS[inc.status]!.replace('_', ' ')} <ArrowRight className="h-3 w-3" />
+                        {statusUpdatingId === inc.id
+                          ? "Updating..."
+                          : `${NEXT_STATUS[inc.status]!.replace('_', ' ')}`}
+                        <ArrowRight className="h-3 w-3" />
                       </Button>
                     )}
                   </div>
@@ -289,12 +361,16 @@ export default function IncidentsPage() {
                 {NEXT_STATUS[selectedIncident.status] && (
                   <Button
                     className="w-full gap-2"
+                    disabled={statusUpdatingId === selectedIncident.id}
                     onClick={() => {
-                      advanceStatus(selectedIncident);
+                      void advanceStatus(selectedIncident);
                       setSelectedIncident(null);
                     }}
                   >
-                    Move to {NEXT_STATUS[selectedIncident.status]!.replace('_', ' ')} <ArrowRight className="h-4 w-4" />
+                    {statusUpdatingId === selectedIncident.id
+                      ? "Updating..."
+                      : `Move to ${NEXT_STATUS[selectedIncident.status]!.replace('_', ' ')}`}
+                    <ArrowRight className="h-4 w-4" />
                   </Button>
                 )}
               </div>

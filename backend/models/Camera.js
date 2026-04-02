@@ -22,6 +22,10 @@ const cameraSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    deviceIndex: {
+      type: Number,
+      min: 0,
+    },
     location: {
       type: String,
       trim: true,

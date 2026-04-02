@@ -1,9 +1,23 @@
-import type { CameraEntity, CameraStatus, CreateCameraInput } from "@/types/monitoring";
+import type {
+  CameraEntity,
+  CameraStatus,
+  CreateCameraInput,
+  DetectionBox,
+} from "@/types/monitoring";
 
 interface ApiEnvelope<T> {
   success: boolean;
   data: T;
   message?: string;
+}
+
+export interface DetectionRecord {
+  _id: string;
+  cameraId: string;
+  detections: DetectionBox[];
+  timestamp: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 const getApiBaseUrl = () => {
@@ -55,3 +69,6 @@ export const updateCameraStatus = (cameraId: string, status: CameraStatus) =>
     method: "PATCH",
     body: JSON.stringify({ status }),
   });
+
+export const getDetectionsByCamera = (cameraId: string, limit = 25) =>
+  request<DetectionRecord[]>(`/detections/camera/${cameraId}?limit=${Math.max(1, limit)}`);
