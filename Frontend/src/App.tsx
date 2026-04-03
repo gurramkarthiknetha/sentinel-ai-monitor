@@ -14,6 +14,7 @@ import DecisionOversight from "@/pages/DecisionOversight";
 import Overview from "@/pages/Overview";
 import Monitoring from "@/pages/Monitoring";
 import Incidents from "@/pages/Incidents";
+import ResponderPanel from "@/pages/ResponderPanel";
 import ZoneMap from "@/pages/ZoneMap";
 import NotFound from "@/pages/NotFound";
 
@@ -54,6 +55,20 @@ const RequireRole = ({ allowedRoles }: { allowedRoles: UserRole[] }) => {
   }
 
   return <Outlet />;
+};
+
+const RoleHome = () => {
+  const user = useAuthStore((state) => state.user);
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user.role === "responder") {
+    return <Navigate to="/responder" replace />;
+  }
+
+  return <Overview />;
 };
 
 const AppRoutes = () => {
@@ -113,8 +128,15 @@ const AppRoutes = () => {
 
       <Route element={<RequireAuth />}>
         <Route element={<ProtectedLayout />}>
-          <Route path="/" element={<Overview />} />
-          <Route path="/incidents" element={<Incidents />} />
+          <Route path="/" element={<RoleHome />} />
+
+          <Route element={<RequireRole allowedRoles={["admin", "operator"]} />}>
+            <Route path="/incidents" element={<Incidents />} />
+          </Route>
+
+          <Route element={<RequireRole allowedRoles={["responder"]} />}>
+            <Route path="/responder" element={<ResponderPanel />} />
+          </Route>
 
           <Route element={<RequireRole allowedRoles={["operator"]} />}>
             <Route path="/monitoring" element={<Monitoring />} />

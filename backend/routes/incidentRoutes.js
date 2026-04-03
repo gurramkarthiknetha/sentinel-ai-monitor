@@ -1,5 +1,6 @@
 import express from "express";
 import {
+  applyResponderAction,
   createIncident,
   getIncidents,
   updateIncidentById,
@@ -11,10 +12,17 @@ const router = express.Router();
 router.get("/", authenticateRequest, requireApprovedUser, requireRoles("admin", "operator", "responder"), getIncidents);
 router.post("/", authenticateRequest, requireApprovedUser, requireRoles("admin", "operator"), createIncident);
 router.patch(
+  "/:incidentId/respond",
+  authenticateRequest,
+  requireApprovedUser,
+  requireRoles("responder"),
+  applyResponderAction,
+);
+router.patch(
   "/:incidentId",
   authenticateRequest,
   requireApprovedUser,
-  requireRoles("admin", "operator", "responder"),
+  requireRoles("admin", "operator"),
   updateIncidentById,
 );
 

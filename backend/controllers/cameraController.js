@@ -1,6 +1,7 @@
 import Camera from "../models/Camera.js";
 import Detection from "../models/Detection.js";
 import { startWorkerForCamera, stopWorkerForCamera } from "../services/rtdetrWorkerManager.js";
+import { emitToMonitoringRoles } from "../sockets/socketRooms.js";
 import { isValidCameraUrl, isValidObjectId } from "../utils/validators.js";
 
 const normalizeSystemDeviceIndex = (value) => {
@@ -246,7 +247,7 @@ export const updateCameraStatusById = async (req, res, next) => {
     }
 
     const io = req.app.get("io");
-    io?.emit("camera:status", {
+    emitToMonitoringRoles(io, "camera:status", {
       cameraId: camera._id.toString(),
       status: camera.status,
       lastActive: camera.lastActive,
@@ -283,7 +284,7 @@ export const deleteCameraById = async (req, res, next) => {
     await Detection.deleteMany({ cameraId: camera._id });
 
     const io = req.app.get("io");
-    io?.emit("camera:deleted", {
+    emitToMonitoringRoles(io, "camera:deleted", {
       cameraId: camera._id.toString(),
       timestamp: new Date().toISOString(),
     });

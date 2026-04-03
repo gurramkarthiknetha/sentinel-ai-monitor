@@ -1,5 +1,6 @@
 import Camera from "../models/Camera.js";
 import Detection from "../models/Detection.js";
+import { emitToMonitoringRoles } from "../sockets/socketRooms.js";
 import { isValidObjectId, normalizeDetectionArray } from "../utils/validators.js";
 
 export const createDetection = async (req, res, next) => {
@@ -48,13 +49,13 @@ export const createDetection = async (req, res, next) => {
 
     const io = req.app.get("io");
 
-    io?.emit("detection:update", {
+    emitToMonitoringRoles(io, "detection:update", {
       cameraId: normalizedCameraId,
       detections: sanitizedDetections,
       timestamp: newDetection.timestamp,
     });
 
-    io?.emit("camera:status", {
+    emitToMonitoringRoles(io, "camera:status", {
       cameraId: normalizedCameraId,
       status: camera.status,
       lastActive: camera.lastActive,

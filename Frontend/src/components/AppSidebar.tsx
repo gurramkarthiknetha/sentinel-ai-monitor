@@ -48,8 +48,7 @@ const NAV_ITEMS_BY_ROLE: Record<UserRole, NavItem[]> = {
     { title: "Zone Map", url: "/map", icon: Map },
   ],
   responder: [
-    { title: "Overview", url: "/", icon: Gauge },
-    { title: "Incidents", url: "/incidents", icon: AlertTriangle },
+    { title: "Responder Panel", url: "/responder", icon: AlertTriangle },
   ],
 };
 

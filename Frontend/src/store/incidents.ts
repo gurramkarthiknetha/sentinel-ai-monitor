@@ -3,6 +3,9 @@ import { create } from 'zustand';
 export type IncidentType = 'fire' | 'crowd' | 'medical' | 'security' | 'inactivity';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type IncidentStatus = 'active' | 'assigned' | 'in_progress' | 'resolved';
+export type ResponderValidation = 'pending' | 'valid_incident' | 'false_alert';
+export type AIDecision = 'needs_human_validation' | 'auto_resolved' | 'auto_escalated';
+export type DetectionMethod = 'YOLO' | 'POSE' | 'CNN' | 'HYBRID';
 
 export interface Incident {
   id: string;
@@ -15,6 +18,16 @@ export interface Incident {
   location: { lat: number; lng: number };
   description: string;
   assignedTo?: string;
+  assignedResponderId?: string;
+  assignedAt?: string;
+  acceptedAt?: string;
+  resolvedByResponderId?: string;
+  responderValidation?: ResponderValidation;
+  aiDecision?: AIDecision;
+  detectionMethod?: DetectionMethod;
+  predictionDetails?: string;
+  snapshotUrl?: string;
+  snapshotBase64?: string;
   notes: string[];
   resolvedAt?: string;
   createdAt?: string;

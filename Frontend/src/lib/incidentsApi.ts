@@ -1,4 +1,12 @@
-import type { Incident, IncidentStatus, IncidentType, Severity } from "@/store/incidents";
+import type {
+  AIDecision,
+  DetectionMethod,
+  Incident,
+  IncidentStatus,
+  IncidentType,
+  ResponderValidation,
+  Severity,
+} from "@/store/incidents";
 import { getAuthToken, useAuthStore } from "@/store/auth";
 
 interface ApiEnvelope<T> {
@@ -16,12 +24,27 @@ export interface CreateIncidentInput {
   location?: { lat: number; lng: number };
   description: string;
   assignedTo?: string;
+  assignedResponderId?: string;
+  assignedAt?: string;
+  acceptedAt?: string;
+  resolvedByResponderId?: string;
+  responderValidation?: ResponderValidation;
+  aiDecision?: AIDecision;
+  detectionMethod?: DetectionMethod;
+  predictionDetails?: string;
+  snapshotUrl?: string;
+  snapshotBase64?: string;
   notes?: string[];
   timestamp?: string;
   resolvedAt?: string;
 }
 
 export interface UpdateIncidentInput extends Partial<CreateIncidentInput> {}
+
+export interface ResponderIncidentActionInput {
+  action: "accept" | "start_progress" | "mark_valid" | "mark_false_alert" | "add_note" | "resolve";
+  note?: string;
+}
 
 const getApiBaseUrl = () => {
   const value = import.meta.env.VITE_API_BASE_URL;
@@ -81,4 +104,10 @@ export const updateIncidentById = (incidentId: string, updates: UpdateIncidentIn
   request<Incident>(`/incidents/${incidentId}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
+  });
+
+export const respondToIncident = (incidentId: string, input: ResponderIncidentActionInput) =>
+  request<Incident>(`/incidents/${incidentId}/respond`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
   });

@@ -1,7 +1,7 @@
 import User from "../models/User.js";
+import { RESPONDER_TYPE_SET, normalizeResponderType } from "../constants/auth.js";
 import { verifyAccessToken } from "../utils/jwt.js";
-
-const MONITORING_SOCKET_ROLES = new Set(["admin", "operator"]);
+import { INCIDENT_SOCKET_ROLES, roleRoom, responderTypeRoom } from "./socketRooms.js";
 
 const resolveSocketToken = (socket) => {
   const authToken = socket.handshake?.auth?.token;
@@ -42,7 +42,7 @@ export const initSocket = (io) => {
         return next(new Error("Invalid token payload"));
       }
 
-      const user = await User.findById(userId).select("_id role approvalStatus");
+      const user = await User.findById(userId).select("_id role approvalStatus responderType");
       if (!user) {
         return next(new Error("User account not found"));
       }
@@ -51,13 +51,19 @@ export const initSocket = (io) => {
         return next(new Error("Waiting for admin approval"));
       }
 
-      if (!MONITORING_SOCKET_ROLES.has(user.role)) {
+      if (!INCIDENT_SOCKET_ROLES.has(user.role)) {
         return next(new Error("Insufficient socket permissions"));
+      }
+
+      const normalizedResponderType = normalizeResponderType(user.responderType);
+      if (user.role === "responder" && !RESPONDER_TYPE_SET.has(normalizedResponderType)) {
+        return next(new Error("Responder profile is incomplete"));
       }
 
       socket.data.authUser = {
         id: String(user._id),
         role: user.role,
+        responderType: user.role === "responder" ? normalizedResponderType : undefined,
       };
 
       return next();
@@ -68,6 +74,15 @@ export const initSocket = (io) => {
 
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
+
+    const authUser = socket.data.authUser;
+    if (authUser?.role) {
+      socket.join(roleRoom(authUser.role));
+    }
+
+    if (authUser?.role === "responder" && authUser.responderType) {
+      socket.join(responderTypeRoom(authUser.responderType));
+    }
 
     socket.on("camera:subscribe", (cameraId) => {
       if (cameraId) {
