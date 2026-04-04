@@ -104,6 +104,10 @@ const API_PREFIX = process.env.API_PREFIX;
 const defaultApiBaseUrl = `http://127.0.0.1:${PORT}${API_PREFIX}`;
 const adminEmailsRaw =
   process.env.ADMINS !== undefined ? process.env.ADMINS : process.env.ADMIN_BOOTSTRAP_EMAILS;
+const defaultWorkerApiKey =
+  String(process.env.NODE_ENV || "development").trim().toLowerCase() === "production"
+    ? ""
+    : "sentinel-local-worker-key";
 
 export const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
@@ -128,7 +132,8 @@ export const env = {
   ADMIN_EMAILS: parseCsvValues(adminEmailsRaw).map((email) => email.toLowerCase()),
   // Legacy alias kept for backwards compatibility with older config references.
   ADMIN_BOOTSTRAP_EMAILS: parseCsvValues(adminEmailsRaw).map((email) => email.toLowerCase()),
-  WORKER_API_KEY: String(process.env.WORKER_API_KEY || "").trim(),
+  WORKER_API_KEY: String(process.env.WORKER_API_KEY || defaultWorkerApiKey).trim(),
+  PYTHONMODEL: String(process.env.PYTHONMODEL || "").trim(),
 
   RTDETR_WORKER_ENABLED: parseBooleanWithDefault(process.env.RTDETR_WORKER_ENABLED, true),
   RTDETR_AUTO_START_ON_BOOT: parseBooleanWithDefault(process.env.RTDETR_AUTO_START_ON_BOOT, true),

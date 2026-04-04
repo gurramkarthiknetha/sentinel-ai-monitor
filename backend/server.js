@@ -6,9 +6,9 @@ import { connectDB } from "./config/db.js";
 import { env } from "./config/env.js";
 import { startCameraStatusMonitor } from "./services/cameraStatusMonitor.js";
 import {
-  initializeRTDETRWorkerManager,
-  shutdownRTDETRWorkerManager,
-} from "./services/rtdetrWorkerManager.js";
+  initializeYOLOWorkerManager,
+  shutdownYOLOWorkerManager,
+} from "./services/yoloWorkerManager.js";
 import { initSocket } from "./sockets/socketHandler.js";
 
 const resolveCorsOrigin = (origins) => {
@@ -34,7 +34,7 @@ const bootstrap = async () => {
   app.set("io", io);
 
   initSocket(io);
-  await initializeRTDETRWorkerManager();
+  await initializeYOLOWorkerManager();
 
   const stopStatusMonitor = startCameraStatusMonitor({
     io,
@@ -50,7 +50,7 @@ const bootstrap = async () => {
     console.log(`Received ${signal}, shutting down...`);
 
     stopStatusMonitor();
-    await shutdownRTDETRWorkerManager();
+    await shutdownYOLOWorkerManager();
 
     server.close(async () => {
       await mongoose.connection.close();

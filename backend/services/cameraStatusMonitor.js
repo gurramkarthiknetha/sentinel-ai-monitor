@@ -1,5 +1,5 @@
 import Camera from "../models/Camera.js";
-import { stopWorkerForCamera } from "./rtdetrWorkerManager.js";
+import { stopWorkerForCamera } from "./yoloWorkerManager.js";
 
 export const startCameraStatusMonitor = ({
   io,

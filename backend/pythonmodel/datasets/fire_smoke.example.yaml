@@ -1,0 +1,12 @@
+# Example YOLO dataset config for fire + smoke detection.
+# Replace the path below with your prepared dataset root.
+
+path: /absolute/path/to/fire_smoke_dataset
+train: images/train
+val: images/val
+test: images/test
+
+nc: 2
+names:
+  - fire
+  - smoke

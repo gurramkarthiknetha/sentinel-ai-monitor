@@ -88,3 +88,17 @@ export const updateCameraStatus = (cameraId: string, status: CameraStatus) =>
 
 export const getDetectionsByCamera = (cameraId: string, limit = 25) =>
   request<DetectionRecord[]>(`/detections/camera/${cameraId}?limit=${Math.max(1, limit)}`);
+
+export const analyzeCameraFrame = (
+  cameraId: string,
+  imageBase64: string,
+  mimeType = "image/jpeg",
+) =>
+  request<DetectionRecord>("/detections/analyze", {
+    method: "POST",
+    body: JSON.stringify({
+      cameraId,
+      imageBase64,
+      mimeType,
+    }),
+  });

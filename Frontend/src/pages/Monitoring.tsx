@@ -16,7 +16,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { addCamera, deleteCamera, getCameras, updateCameraStatus } from "@/lib/monitoringApi";
+import {
+  addCamera,
+  analyzeCameraFrame,
+  deleteCamera,
+  getCameras,
+  updateCameraStatus,
+} from "@/lib/monitoringApi";
 import { createMonitoringSocket } from "@/lib/monitoringSocket";
 import { cn } from "@/lib/utils";
 import type {
@@ -109,6 +115,10 @@ const CLASS_LABELS: Record<number, string> = {
   77: "teddy bear",
   78: "hair drier",
   79: "toothbrush",
+  80: "fire",
+  81: "smoke",
+  82: "stampede",
+  83: "medical emergency",
 };
 
 const BOX_COLORS = [
@@ -167,9 +177,20 @@ interface BrowserVideoDevice {
   label: string;
 }
 
-const SystemCameraStream = memo(function SystemCameraStream({ deviceId }: { deviceId?: string }) {
+const SystemCameraStream = memo(function SystemCameraStream({
+  deviceId,
+  onVideoElement,
+}: {
+  deviceId?: string;
+  onVideoElement?: (element: HTMLVideoElement | null) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const onVideoElementRef = useRef(onVideoElement);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onVideoElementRef.current = onVideoElement;
+  }, [onVideoElement]);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -197,6 +218,7 @@ const SystemCameraStream = memo(function SystemCameraStream({ deviceId }: { devi
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          onVideoElementRef.current?.(videoRef.current);
         }
 
         setError(null);
@@ -209,6 +231,7 @@ const SystemCameraStream = memo(function SystemCameraStream({ deviceId }: { devi
 
     return () => {
       cancelled = true;
+      onVideoElementRef.current?.(null);
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
@@ -229,9 +252,11 @@ const SystemCameraStream = memo(function SystemCameraStream({ deviceId }: { devi
 const CameraViewport = memo(function CameraViewport({
   camera,
   liveDetections,
+  onSystemVideoElement,
 }: {
   camera: CameraEntity;
   liveDetections?: DetectionUpdateEvent;
+  onSystemVideoElement?: (element: HTMLVideoElement | null) => void;
 }) {
   const sourceType = camera.sourceType || "RTSP";
   const isSystemCamera = sourceType === "SYSTEM";
@@ -241,7 +266,7 @@ const CameraViewport = memo(function CameraViewport({
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg border border-border bg-muted/20">
       {isSystemCamera ? (
-        <SystemCameraStream deviceId={camera.deviceId} />
+        <SystemCameraStream deviceId={camera.deviceId} onVideoElement={onSystemVideoElement} />
       ) : supportsBrowserPlayback ? (
         <video
           className="absolute inset-0 h-full w-full object-cover"
@@ -313,6 +338,12 @@ export default function MonitoringPage() {
   const [deletingCameraId, setDeletingCameraId] = useState<string | null>(null);
   const [updatingStatusCameraId, setUpdatingStatusCameraId] = useState<string | null>(null);
   const [focusedCameraId, setFocusedCameraId] = useState<string | null>(null);
+
+  const camerasRef = useRef<CameraEntity[]>([]);
+  const systemVideoElementsRef = useRef<Record<string, HTMLVideoElement>>({});
+  const analysisInFlightRef = useRef<Set<string>>(new Set());
+  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastAnalyzeErrorAtRef = useRef(0);
 
   const isFocusOpen = focusedCameraId !== null;
 
@@ -433,6 +464,104 @@ export default function MonitoringPage() {
       void loadSystemCameraDevices();
     }
   }, [createDialogOpen, createSourceType, loadSystemCameraDevices]);
+
+  useEffect(() => {
+    camerasRef.current = cameras;
+  }, [cameras]);
+
+  const bindSystemVideoElement = useCallback((cameraId: string, element: HTMLVideoElement | null) => {
+    if (element) {
+      systemVideoElementsRef.current[cameraId] = element;
+      return;
+    }
+
+    delete systemVideoElementsRef.current[cameraId];
+    analysisInFlightRef.current.delete(cameraId);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const inFlight = analysisInFlightRef.current;
+
+    const runAnalyzeCycle = async () => {
+      const activeCameras = camerasRef.current;
+
+      for (const camera of activeCameras) {
+        if (cancelled) {
+          return;
+        }
+
+        const sourceType = camera.sourceType || "RTSP";
+        if (sourceType !== "SYSTEM" || camera.status !== "ONLINE") {
+          continue;
+        }
+
+        if (inFlight.has(camera._id)) {
+          continue;
+        }
+
+        const videoElement = systemVideoElementsRef.current[camera._id];
+        if (
+          !videoElement ||
+          videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+          videoElement.videoWidth <= 0 ||
+          videoElement.videoHeight <= 0
+        ) {
+          continue;
+        }
+
+        inFlight.add(camera._id);
+
+        try {
+          const width = Math.min(640, videoElement.videoWidth);
+          const height = Math.max(1, Math.round((width * videoElement.videoHeight) / videoElement.videoWidth));
+
+          let canvas = captureCanvasRef.current;
+          if (!canvas) {
+            canvas = document.createElement("canvas");
+            captureCanvasRef.current = canvas;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const context = canvas.getContext("2d");
+          if (!context) {
+            continue;
+          }
+
+          context.drawImage(videoElement, 0, 0, width, height);
+          const imageBase64 = canvas.toDataURL("image/jpeg", 0.72);
+
+          await analyzeCameraFrame(camera._id, imageBase64);
+        } catch (error) {
+          const now = Date.now();
+          if (now - lastAnalyzeErrorAtRef.current > 12000) {
+            lastAnalyzeErrorAtRef.current = now;
+            toast({
+              title: "YOLO analysis temporarily unavailable",
+              description: error instanceof Error ? error.message : "Unexpected error",
+              variant: "destructive",
+            });
+          }
+        } finally {
+          inFlight.delete(camera._id);
+        }
+      }
+    };
+
+    void runAnalyzeCycle();
+
+    const intervalId = window.setInterval(() => {
+      void runAnalyzeCycle();
+    }, 2200);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      inFlight.clear();
+    };
+  }, [toast]);
 
   useEffect(() => {
     let socket: ReturnType<typeof createMonitoringSocket> | undefined;
@@ -695,7 +824,7 @@ export default function MonitoringPage() {
         <div>
           <h1 className="text-2xl font-heading font-bold tracking-tight">Video Monitoring</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Live camera grid with Socket.IO status updates and RT-DETR bounding boxes
+            Live camera grid with Socket.IO status updates and YOLOv8 bounding boxes
           </p>
         </div>
 
@@ -899,7 +1028,11 @@ export default function MonitoringPage() {
                 )}
               >
                 <div className="relative p-3 pb-0">
-                  <CameraViewport camera={camera} liveDetections={overlay} />
+                  <CameraViewport
+                    camera={camera}
+                    liveDetections={overlay}
+                    onSystemVideoElement={(element) => bindSystemVideoElement(camera._id, element)}
+                  />
 
                   {isFocused ? (
                     <Button

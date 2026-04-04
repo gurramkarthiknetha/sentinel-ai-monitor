@@ -1,5 +1,9 @@
 import express from "express";
-import { createDetection, getDetectionsByCamera } from "../controllers/detectionController.js";
+import {
+	analyzeDetectionFrame,
+	createDetection,
+	getDetectionsByCamera,
+} from "../controllers/detectionController.js";
 import {
 	authenticateRequest,
 	authenticateWorkerOrRoles,
@@ -10,6 +14,11 @@ import {
 const router = express.Router();
 
 router.post("/", authenticateWorkerOrRoles("admin", "operator"), createDetection);
+router.post(
+	"/analyze",
+	authenticateWorkerOrRoles("admin", "operator"),
+	analyzeDetectionFrame,
+);
 router.get(
 	"/camera/:cameraId",
 	authenticateRequest,

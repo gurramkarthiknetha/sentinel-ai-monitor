@@ -1,6 +1,6 @@
 import Camera from "../models/Camera.js";
 import Detection from "../models/Detection.js";
-import { startWorkerForCamera, stopWorkerForCamera } from "../services/rtdetrWorkerManager.js";
+import { startWorkerForCamera, stopWorkerForCamera } from "../services/yoloWorkerManager.js";
 import { emitToMonitoringRoles } from "../sockets/socketRooms.js";
 import { isValidCameraUrl, isValidObjectId } from "../utils/validators.js";
 
@@ -239,7 +239,7 @@ export const updateCameraStatusById = async (req, res, next) => {
         await camera.save();
 
         return res.status(500).json({
-          message: `Failed to start RT-DETR worker: ${error.message}`,
+          message: `Failed to initialize YOLO service: ${error.message}`,
         });
       }
     } else {

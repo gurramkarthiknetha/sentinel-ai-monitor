@@ -9,6 +9,12 @@ MIN_BOX_AREA_RATIO="${RTDETR_MIN_BOX_AREA_RATIO:-0.0005}"
 MAX_BOX_AREA_RATIO="${RTDETR_MAX_BOX_AREA_RATIO:-0.90}"
 EXCLUDE_CLASS_IDS="${RTDETR_EXCLUDE_CLASS_IDS:-}"
 WORKER_API_KEY="${WORKER_API_KEY:-}"
+PYTHONMODEL_URL="${PYTHONMODEL:-}"
+
+NODE_ENV_NORMALIZED="$(printf "%s" "${NODE_ENV:-development}" | tr '[:upper:]' '[:lower:]')"
+if [[ -z "$WORKER_API_KEY" && "$NODE_ENV_NORMALIZED" != "production" ]]; then
+  WORKER_API_KEY="sentinel-local-worker-key"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -237,6 +243,10 @@ fi
 
 if [[ -n "$WORKER_API_KEY" ]]; then
   action_cmd+=(--worker-api-key "$WORKER_API_KEY")
+fi
+
+if [[ -n "$PYTHONMODEL_URL" ]]; then
+  action_cmd+=(--pythonmodel-url "$PYTHONMODEL_URL")
 fi
 
 printf 'Running: %q ' "${action_cmd[@]}"
