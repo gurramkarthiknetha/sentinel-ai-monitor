@@ -9,6 +9,10 @@ import {
   initializeYOLOWorkerManager,
   shutdownYOLOWorkerManager,
 } from "./services/yoloWorkerManager.js";
+import {
+  initializeFireEscalationService,
+  shutdownFireEscalationService,
+} from "./services/fireEscalationService.js";
 import { initSocket } from "./sockets/socketHandler.js";
 
 const resolveCorsOrigin = (origins) => {
@@ -35,6 +39,7 @@ const bootstrap = async () => {
 
   initSocket(io);
   await initializeYOLOWorkerManager();
+  await initializeFireEscalationService(io);
 
   const stopStatusMonitor = startCameraStatusMonitor({
     io,
@@ -50,6 +55,7 @@ const bootstrap = async () => {
     console.log(`Received ${signal}, shutting down...`);
 
     stopStatusMonitor();
+    shutdownFireEscalationService();
     await shutdownYOLOWorkerManager();
 
     server.close(async () => {

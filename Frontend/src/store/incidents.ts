@@ -2,7 +2,13 @@ import { create } from 'zustand';
 
 export type IncidentType = 'fire' | 'crowd' | 'medical' | 'security' | 'inactivity';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
-export type IncidentStatus = 'active' | 'assigned' | 'in_progress' | 'resolved';
+export type IncidentStatus =
+  | 'active'
+  | 'assigned'
+  | 'in_progress'
+  | 'pending_confirmation'
+  | 'escalated'
+  | 'resolved';
 export type ResponderValidation = 'pending' | 'valid_incident' | 'false_alert';
 export type AIDecision = 'needs_human_validation' | 'auto_resolved' | 'auto_escalated';
 export type DetectionMethod = 'YOLO' | 'POSE' | 'CNN' | 'HYBRID';
@@ -28,6 +34,9 @@ export interface Incident {
   predictionDetails?: string;
   snapshotUrl?: string;
   snapshotBase64?: string;
+  sourceCameraId?: string;
+  confirmationDeadline?: string;
+  escalatedAt?: string;
   notes: string[];
   resolvedAt?: string;
   createdAt?: string;

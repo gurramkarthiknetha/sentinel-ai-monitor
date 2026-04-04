@@ -5,6 +5,10 @@ import {
   INCIDENT_TYPE_SET,
   getAllowedIncidentTypesForResponder,
 } from "../constants/auth.js";
+import {
+  confirmFireIncidentByOperator,
+  rejectFireIncidentByOperator,
+} from "../services/fireEscalationService.js";
 import { emitIncidentEvent } from "../sockets/socketRooms.js";
 import { isValidObjectId } from "../utils/validators.js";
 
@@ -205,7 +209,12 @@ export const getIncidents = async (req, res, next) => {
 
     const incidents = await Incident.find(filter).sort({ timestamp: -1, createdAt: -1 }).limit(limit);
 
-    return res.json({ success: true, data: incidents });
+    const visibleIncidents =
+      req.authUser?.role === "responder" && req.authUser?.responderType === "fire"
+        ? incidents.filter((incident) => incident.status !== "pending_confirmation")
+        : incidents;
+
+    return res.json({ success: true, data: visibleIncidents });
   } catch (error) {
     return next(error);
   }
@@ -234,6 +243,9 @@ export const createIncident = async (req, res, next) => {
       predictionDetails,
       snapshotUrl,
       snapshotBase64,
+      sourceCameraId,
+      confirmationDeadline,
+      escalatedAt,
     } = req.body;
 
     if (!INCIDENT_TYPE_SET.has(type)) {
@@ -247,7 +259,10 @@ export const createIncident = async (req, res, next) => {
     if (!INCIDENT_STATUS_SET.has(status)) {
       return res
         .status(400)
-        .json({ message: "status must be active, assigned, in_progress, or resolved" });
+        .json({
+          message:
+            "status must be active, assigned, in_progress, pending_confirmation, escalated, or resolved",
+        });
     }
 
     if (typeof zone !== "string" || !zone.trim()) {
@@ -287,6 +302,16 @@ export const createIncident = async (req, res, next) => {
       return res.status(400).json({ message: "acceptedAt must be a valid ISO date" });
     }
 
+    const parsedConfirmationDeadlineField = parseDateField(confirmationDeadline);
+    if (parsedConfirmationDeadlineField.invalid) {
+      return res.status(400).json({ message: "confirmationDeadline must be a valid ISO date" });
+    }
+
+    const parsedEscalatedAtField = parseDateField(escalatedAt);
+    if (parsedEscalatedAtField.invalid) {
+      return res.status(400).json({ message: "escalatedAt must be a valid ISO date" });
+    }
+
     const assignedToValue = normalizeOptionalString(assignedTo);
 
     const assignedResponderIdValue = (() => {
@@ -301,13 +326,31 @@ export const createIncident = async (req, res, next) => {
       return res.status(400).json({ message: "assignedResponderId must be a valid user id" });
     }
 
+    const sourceCameraIdValue = (() => {
+      if (sourceCameraId === undefined || sourceCameraId === null || sourceCameraId === "") {
+        return undefined;
+      }
+
+      return isValidObjectId(sourceCameraId) ? sourceCameraId : null;
+    })();
+
+    if (sourceCameraIdValue === null) {
+      return res.status(400).json({ message: "sourceCameraId must be a valid camera id" });
+    }
+
     let assignedAtValue = parsedAssignedAtField.present ? parsedAssignedAtField.value : undefined;
     let acceptedAtValue = parsedAcceptedAtField.present ? parsedAcceptedAtField.value : undefined;
     let resolvedAtValue = parsedResolvedAtField.present ? parsedResolvedAtField.value : undefined;
+    let confirmationDeadlineValue = parsedConfirmationDeadlineField.present
+      ? parsedConfirmationDeadlineField.value
+      : undefined;
+    let escalatedAtValue = parsedEscalatedAtField.present ? parsedEscalatedAtField.value : undefined;
 
     if (
       !assignedAtValue &&
-      (assignedToValue || assignedResponderIdValue || ["assigned", "in_progress", "resolved"].includes(status))
+      (assignedToValue ||
+        assignedResponderIdValue ||
+        ["assigned", "in_progress", "escalated", "resolved"].includes(status))
     ) {
       assignedAtValue = new Date();
     }
@@ -318,6 +361,14 @@ export const createIncident = async (req, res, next) => {
 
     if (!resolvedAtValue && status === "resolved") {
       resolvedAtValue = new Date();
+    }
+
+    if (!escalatedAtValue && status === "escalated") {
+      escalatedAtValue = new Date();
+    }
+
+    if (status !== "pending_confirmation") {
+      confirmationDeadlineValue = undefined;
     }
 
     const predictionDetailsValue = normalizeOptionalString(predictionDetails);
@@ -354,7 +405,10 @@ export const createIncident = async (req, res, next) => {
           predictionDetails: predictionDetailsValue,
           snapshotUrl: snapshotUrlValue,
           snapshotBase64: snapshotBase64Value,
+          sourceCameraId: sourceCameraIdValue,
           notes: safeNotes,
+          confirmationDeadline: confirmationDeadlineValue,
+          escalatedAt: escalatedAtValue,
           resolvedAt: resolvedAtValue,
           resolvedByResponderId:
             status === "resolved" && assignedResponderIdValue ? assignedResponderIdValue : undefined,
@@ -529,6 +583,32 @@ export const updateIncidentById = async (req, res, next) => {
       }
     }
 
+    if (payload.sourceCameraId !== undefined) {
+      if (payload.sourceCameraId === null || payload.sourceCameraId === "") {
+        updates.sourceCameraId = undefined;
+      } else if (!isValidObjectId(payload.sourceCameraId)) {
+        return res.status(400).json({ message: "sourceCameraId must be a valid camera id" });
+      } else {
+        updates.sourceCameraId = payload.sourceCameraId;
+      }
+    }
+
+    const confirmationDeadlineField = parseDateField(payload.confirmationDeadline);
+    if (confirmationDeadlineField.invalid) {
+      return res.status(400).json({ message: "confirmationDeadline must be a valid ISO date" });
+    }
+    if (confirmationDeadlineField.present) {
+      updates.confirmationDeadline = confirmationDeadlineField.value;
+    }
+
+    const escalatedAtField = parseDateField(payload.escalatedAt);
+    if (escalatedAtField.invalid) {
+      return res.status(400).json({ message: "escalatedAt must be a valid ISO date" });
+    }
+    if (escalatedAtField.present) {
+      updates.escalatedAt = escalatedAtField.value;
+    }
+
     if (payload.responderValidation !== undefined) {
       const normalized =
         typeof payload.responderValidation === "string"
@@ -582,12 +662,29 @@ export const updateIncidentById = async (req, res, next) => {
     const nextStatus = updates.status ?? incident.status;
 
     if (
-      ["assigned", "in_progress", "resolved"].includes(nextStatus) &&
+      ["assigned", "in_progress", "escalated", "resolved"].includes(nextStatus) &&
       payload.assignedAt === undefined &&
       updates.assignedAt === undefined &&
       !incident.assignedAt
     ) {
       updates.assignedAt = now;
+    }
+
+    if (
+      nextStatus === "pending_confirmation" &&
+      payload.confirmationDeadline === undefined &&
+      updates.confirmationDeadline === undefined
+    ) {
+      updates.confirmationDeadline = new Date(now.getTime() + 10_000);
+    }
+
+    if (
+      nextStatus === "escalated" &&
+      payload.escalatedAt === undefined &&
+      updates.escalatedAt === undefined &&
+      !incident.escalatedAt
+    ) {
+      updates.escalatedAt = now;
     }
 
     if (
@@ -603,11 +700,18 @@ export const updateIncidentById = async (req, res, next) => {
       if (payload.resolvedAt === undefined && updates.resolvedAt === undefined && !incident.resolvedAt) {
         updates.resolvedAt = now;
       }
+      if (payload.confirmationDeadline === undefined) {
+        updates.confirmationDeadline = undefined;
+      }
     } else if (updates.status !== undefined && payload.resolvedAt === undefined) {
       updates.resolvedAt = undefined;
       if (payload.resolvedByResponderId === undefined) {
         updates.resolvedByResponderId = undefined;
       }
+    }
+
+    if (nextStatus !== "escalated" && updates.status !== undefined && payload.escalatedAt === undefined) {
+      updates.escalatedAt = undefined;
     }
 
     Object.assign(incident, updates);
@@ -636,6 +740,10 @@ export const applyResponderAction = async (req, res, next) => {
 
     if (!responderCanAccessIncident(req.authUser, incident.type)) {
       return res.status(403).json({ message: "Responder access is limited to assigned alert type" });
+    }
+
+    if (incident.type === "fire" && incident.status === "pending_confirmation") {
+      return res.status(403).json({ message: "Fire incident is waiting for operator confirmation" });
     }
 
     const payload = req.body || {};
@@ -677,7 +785,7 @@ export const applyResponderAction = async (req, res, next) => {
     switch (action) {
       case "accept": {
         ensureOwnership();
-        if (incident.status === "active") {
+        if (["active", "pending_confirmation", "escalated"].includes(incident.status)) {
           incident.status = "assigned";
         }
 
@@ -688,6 +796,7 @@ export const applyResponderAction = async (req, res, next) => {
       case "start_progress": {
         ensureOwnership();
         incident.status = "in_progress";
+
         if (!incident.acceptedAt) {
           incident.acceptedAt = now;
         }
@@ -704,7 +813,7 @@ export const applyResponderAction = async (req, res, next) => {
           incident.acceptedAt = now;
         }
 
-        if (incident.status === "active" || incident.status === "assigned") {
+        if (["active", "assigned", "escalated"].includes(incident.status)) {
           incident.status = "in_progress";
         }
 
@@ -761,6 +870,32 @@ export const applyResponderAction = async (req, res, next) => {
     emitIncidentEvent(req.app.get("io"), "incident:updated", incident.toObject());
 
     return res.json({ success: true, data: incident });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const resolveFireConfirmationById = async (req, res, next) => {
+  try {
+    const { incidentId } = req.params;
+    const action = typeof req.body?.action === "string" ? req.body.action.trim().toLowerCase() : "";
+
+    if (!incidentId || typeof incidentId !== "string") {
+      return res.status(400).json({ message: "incidentId is required" });
+    }
+
+    if (!["confirm", "reject"].includes(action)) {
+      return res.status(400).json({ message: "action must be confirm or reject" });
+    }
+
+    const io = req.app.get("io");
+
+    const updatedIncident =
+      action === "confirm"
+        ? await confirmFireIncidentByOperator({ incidentId, authUser: req.authUser, io })
+        : await rejectFireIncidentByOperator({ incidentId, authUser: req.authUser, io });
+
+    return res.json({ success: true, data: updatedIncident });
   } catch (error) {
     return next(error);
   }

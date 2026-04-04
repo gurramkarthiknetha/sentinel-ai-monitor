@@ -38,6 +38,8 @@ import { useAuthStore, type AuthUser } from "@/store/auth";
 
 const WORKFLOW_STATUS_LABELS: Record<IncidentStatus, "pending" | "assigned" | "resolved"> = {
   active: "pending",
+  pending_confirmation: "pending",
+  escalated: "assigned",
   assigned: "assigned",
   in_progress: "assigned",
   resolved: "resolved",
@@ -51,6 +53,8 @@ const STATUS_BADGE_CLASS: Record<"pending" | "assigned" | "resolved", string> = 
 
 const NEXT_STATUS: Record<IncidentStatus, IncidentStatus | null> = {
   active: "assigned",
+  pending_confirmation: "escalated",
+  escalated: "in_progress",
   assigned: "in_progress",
   in_progress: "resolved",
   resolved: null,
@@ -653,7 +657,16 @@ export default function IncidentsPage() {
                 <Card className="space-y-3 p-4">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">Workflow control</p>
                   <div className="flex flex-wrap gap-2">
-                    {(["active", "assigned", "in_progress", "resolved"] as IncidentStatus[]).map((status) => (
+                    {(
+                      [
+                        "active",
+                        "pending_confirmation",
+                        "escalated",
+                        "assigned",
+                        "in_progress",
+                        "resolved",
+                      ] as IncidentStatus[]
+                    ).map((status) => (
                       <Button
                         key={status}
                         variant={selectedIncident.status === status ? "default" : "outline"}

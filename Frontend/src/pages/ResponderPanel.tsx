@@ -33,6 +33,8 @@ type PriorityLevel = "critical" | "high" | "medium" | "low";
 
 const QUEUE_STATUS_LABELS: Record<IncidentStatus, QueueStatus> = {
   active: "pending",
+  pending_confirmation: "pending",
+  escalated: "pending",
   assigned: "pending",
   in_progress: "in_progress",
   resolved: "resolved",

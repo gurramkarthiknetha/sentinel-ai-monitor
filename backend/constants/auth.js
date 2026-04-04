@@ -4,7 +4,14 @@ export const APPROVAL_STATUSES = ["pending", "approved", "rejected"];
 
 export const INCIDENT_TYPES = ["fire", "crowd", "medical", "security", "inactivity"];
 export const INCIDENT_SEVERITIES = ["low", "medium", "high", "critical"];
-export const INCIDENT_STATUSES = ["active", "assigned", "in_progress", "resolved"];
+export const INCIDENT_STATUSES = [
+  "active",
+  "assigned",
+  "in_progress",
+  "pending_confirmation",
+  "escalated",
+  "resolved",
+];
 
 export const USER_ROLE_SET = new Set(USER_ROLES);
 export const RESPONDER_TYPE_SET = new Set(RESPONDER_TYPES);

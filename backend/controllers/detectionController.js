@@ -1,5 +1,6 @@
 import Camera from "../models/Camera.js";
 import Detection from "../models/Detection.js";
+import { createOrRefreshFireIncidentFromDetection } from "../services/fireEscalationService.js";
 import { analyzeFrameBuffer } from "../services/yoloService.js";
 import { emitToMonitoringRoles } from "../sockets/socketRooms.js";
 import { isValidObjectId, normalizeDetectionArray } from "../utils/validators.js";
@@ -36,6 +37,59 @@ const parseBase64Frame = (input, mimeTypeHint) => {
     buffer,
     mimeType,
   };
+};
+
+const parseConfidenceValue = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  if (parsed >= 0 && parsed <= 1) {
+    return parsed;
+  }
+
+  if (parsed > 1 && parsed <= 100) {
+    return parsed / 100;
+  }
+
+  return null;
+};
+
+const extractFireConfidence = (yoloResult) => {
+  const fromFireSummary = parseConfidenceValue(yoloResult?.fireDetection?.max_fire_confidence);
+  if (fromFireSummary !== null) {
+    return fromFireSummary;
+  }
+
+  const fromScores = parseConfidenceValue(yoloResult?.scores?.fire);
+  if (fromScores !== null) {
+    return fromScores;
+  }
+
+  return null;
+};
+
+const extractSnapshotBase64 = (rawInput) => {
+  const raw = typeof rawInput === "string" ? rawInput.trim() : "";
+  if (!raw) {
+    return undefined;
+  }
+
+  const dataUrlMatch = raw.match(DATA_URL_PATTERN);
+  const payload = dataUrlMatch ? dataUrlMatch[2] || "" : raw;
+  const sanitized = payload.replace(/\s+/g, "");
+
+  if (!sanitized || !/^[a-zA-Z0-9+/=]+$/.test(sanitized)) {
+    return undefined;
+  }
+
+  // Keep snapshots bounded so incident records stay lightweight.
+  if (sanitized.length > 2_000_000) {
+    return undefined;
+  }
+
+  return sanitized;
 };
 
 const persistAndBroadcastDetection = async ({ req, camera, detections, timestamp }) => {
@@ -158,6 +212,40 @@ export const analyzeDetectionFrame = async (req, res, next) => {
       timestamp: yoloResult.timestamp,
     });
 
+    const io = req.app.get("io");
+    const fireConfidence = extractFireConfidence(yoloResult);
+    const snapshotBase64 = extractSnapshotBase64(imageBase64 || frameBase64);
+    let fireIncident = null;
+
+    if (fireConfidence !== null) {
+      try {
+        const predictionDetails = `AI fire confidence ${Math.round(fireConfidence * 100)}% from ${
+          camera.name || "camera"
+        }`;
+
+        const fireWorkflowResult = await createOrRefreshFireIncidentFromDetection({
+          io,
+          camera,
+          confidence: fireConfidence,
+          snapshotBase64,
+          predictionDetails,
+        });
+
+        if (fireWorkflowResult?.incident) {
+          fireIncident = {
+            id: fireWorkflowResult.incident.id,
+            status: fireWorkflowResult.incident.status,
+            confidence: fireWorkflowResult.incident.confidence,
+            confirmationDeadline: fireWorkflowResult.incident.confirmationDeadline,
+            escalatedAt: fireWorkflowResult.incident.escalatedAt,
+            created: Boolean(fireWorkflowResult.created),
+          };
+        }
+      } catch (workflowError) {
+        console.error("[fire-workflow] Unable to process fire escalation workflow:", workflowError);
+      }
+    }
+
     return res.status(201).json({
       success: true,
       data: newDetection,
@@ -165,6 +253,7 @@ export const analyzeDetectionFrame = async (req, res, next) => {
         summary: yoloResult.summary,
         analysis: yoloResult.analysis,
         fireDetection: yoloResult.fireDetection,
+        fireIncident,
         scores: yoloResult.scores,
         rawDetections: yoloResult.rawDetections,
       },

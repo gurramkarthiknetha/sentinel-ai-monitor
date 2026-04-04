@@ -18,6 +18,11 @@ from typing import Any
 import yaml
 
 try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
+
+try:
     from ultralytics import YOLO
 except ModuleNotFoundError as error:
     raise SystemExit(
@@ -90,8 +95,24 @@ def validate_dataset(dataset_yaml: dict[str, Any]) -> list[str]:
     return class_names
 
 
+def resolve_device(requested_device: str) -> str:
+    normalized = str(requested_device or "").strip().lower() or "auto"
+    if normalized != "auto":
+        return requested_device
+
+    if torch is not None:
+        if getattr(getattr(torch, "backends", None), "mps", None) is not None:
+            if torch.backends.mps.is_available():
+                return "mps"
+        if torch.cuda.is_available():
+            return "0"
+
+    return "cpu"
+
+
 def main() -> int:
     args = parse_args()
+    resolved_device = resolve_device(args.device)
 
     data_path = Path(args.data).resolve()
     dataset_yaml = read_yaml(data_path)
@@ -106,7 +127,7 @@ def main() -> int:
         "batch": args.batch,
         "imgsz": args.imgsz,
         "lr0": args.lr0,
-        "device": args.device,
+        "device": resolved_device,
     }, indent=2))
 
     model = YOLO(args.model)
@@ -119,7 +140,7 @@ def main() -> int:
         lr0=args.lr0,
         patience=args.patience,
         workers=args.workers,
-        device=args.device,
+        device=resolved_device,
         project=args.project,
         name=args.name,
         optimizer=args.optimizer,

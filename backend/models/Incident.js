@@ -38,7 +38,7 @@ const incidentSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["active", "assigned", "in_progress", "resolved"],
+      enum: ["active", "assigned", "in_progress", "pending_confirmation", "escalated", "resolved"],
       default: "active",
     },
     confidence: {
@@ -59,6 +59,10 @@ const incidentSchema = new mongoose.Schema(
     location: {
       type: incidentLocationSchema,
       required: true,
+    },
+    sourceCameraId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Camera",
     },
     description: {
       type: String,
@@ -114,6 +118,12 @@ const incidentSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    confirmationDeadline: {
+      type: Date,
+    },
+    escalatedAt: {
+      type: Date,
+    },
     resolvedAt: {
       type: Date,
     },
@@ -127,5 +137,6 @@ incidentSchema.index({ timestamp: -1 });
 incidentSchema.index({ status: 1, severity: 1 });
 incidentSchema.index({ type: 1, status: 1, timestamp: -1 });
 incidentSchema.index({ assignedResponderId: 1, status: 1, timestamp: -1 });
+incidentSchema.index({ sourceCameraId: 1, type: 1, status: 1, timestamp: -1 });
 
 export default mongoose.model("Incident", incidentSchema);

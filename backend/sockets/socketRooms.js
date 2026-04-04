@@ -30,7 +30,11 @@ export const emitIncidentEvent = (io, eventName, incident) => {
   emitToRoles(io, ["admin", "operator"], eventName, incident);
 
   const incidentType = normalizeResponderType(incident.type);
-  if (RESPONDER_TYPE_SET.has(incidentType)) {
+  const shouldNotifyResponders =
+    RESPONDER_TYPE_SET.has(incidentType) &&
+    !(incidentType === "fire" && incident.status === "pending_confirmation");
+
+  if (shouldNotifyResponders) {
     io.to(responderTypeRoom(incidentType)).emit(eventName, incident);
   }
 };

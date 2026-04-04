@@ -46,6 +46,10 @@ export interface ResponderIncidentActionInput {
   note?: string;
 }
 
+export interface FireConfirmationActionInput {
+  action: "confirm" | "reject";
+}
+
 const getApiBaseUrl = () => {
   const value = import.meta.env.VITE_API_BASE_URL;
   if (!value) {
@@ -108,6 +112,15 @@ export const updateIncidentById = (incidentId: string, updates: UpdateIncidentIn
 
 export const respondToIncident = (incidentId: string, input: ResponderIncidentActionInput) =>
   request<Incident>(`/incidents/${incidentId}/respond`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+
+export const resolveFireIncidentConfirmation = (
+  incidentId: string,
+  input: FireConfirmationActionInput,
+) =>
+  request<Incident>(`/incidents/${incidentId}/fire-confirmation`, {
     method: "PATCH",
     body: JSON.stringify(input),
   });
