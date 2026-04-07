@@ -872,7 +872,7 @@ export default function MonitoringPage() {
               <DialogHeader>
                 <DialogTitle>Add New Camera</DialogTitle>
                 <DialogDescription>
-                  Add either an RTSP/IP stream or a local system webcam.
+                  Add either an RTSP/HTTP stream or a local system webcam.
                 </DialogDescription>
               </DialogHeader>
 
@@ -887,7 +887,7 @@ export default function MonitoringPage() {
                       <SelectValue placeholder="Select camera source" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="RTSP">RTSP / IP Camera</SelectItem>
+                      <SelectItem value="RTSP">RTSP / IP / HTTP Camera</SelectItem>
                       <SelectItem value="SYSTEM">System Camera</SelectItem>
                     </SelectContent>
                   </Select>
@@ -900,11 +900,11 @@ export default function MonitoringPage() {
 
                 {createSourceType === "RTSP" ? (
                   <div className="space-y-2">
-                    <Label htmlFor="rtspUrl">RTSP / Stream URL</Label>
+                    <Label htmlFor="rtspUrl">Stream URL</Label>
                     <Input
                       id="rtspUrl"
                       name="rtspUrl"
-                      placeholder="rtsp://username:password@192.168.1.20:554/stream1"
+                      placeholder="rtsp://username:password@192.168.1.20:554/stream1 or https://cam.staysync.io/be/live/"
                       required
                     />
                   </div>
@@ -968,7 +968,7 @@ export default function MonitoringPage() {
       {!isLoading && cameras.length === 0 ? (
         <Card className="p-8 text-center">
           <p className="text-sm text-muted-foreground">
-            No cameras configured yet. Add your first RTSP/IP camera to begin monitoring.
+            No cameras configured yet. Add your first RTSP/IP/HTTP camera to begin monitoring.
           </p>
         </Card>
       ) : null}
@@ -986,6 +986,12 @@ export default function MonitoringPage() {
         {cameras.map((camera, index) => {
           const overlay = liveDetections[camera._id];
           const sourceType = camera.sourceType || "RTSP";
+          const isSystemCamera = sourceType === "SYSTEM";
+          const displaySourceType = isSystemCamera
+            ? "SYSTEM"
+            : camera.rtspUrl?.startsWith("http://") || camera.rtspUrl?.startsWith("https://")
+            ? "HTTP"
+            : "RTSP";
           const isFocused = focusedCameraId === camera._id;
           const dimmed = isFocusOpen && !isFocused;
 
@@ -1060,7 +1066,7 @@ export default function MonitoringPage() {
                       <Camera className="h-4 w-4 text-muted-foreground" />
                       <span className="truncate text-sm font-heading font-medium">{camera.name}</span>
                       <Badge variant="outline" className="border-accent/40 text-[10px] text-accent">
-                        {sourceType === "SYSTEM" ? "SYSTEM" : "RTSP"}
+                        {displaySourceType}
                       </Badge>
                     </div>
 

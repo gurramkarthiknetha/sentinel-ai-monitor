@@ -1,0 +1,9 @@
+path: /home/campus/.cache/kagglehub/datasets/azimjaan21/fire-and-smoke-dataset-object-detection-yolo/versions/1/fire_smoke
+train: train/images
+val: val/images
+test: test/images
+
+nc: 2
+names:
+  - fire
+  - smoke
