@@ -1,7 +1,7 @@
 import Incident from "../models/Incident.js";
 import { emitIncidentEvent, emitToRoles, responderTypeRoom } from "../sockets/socketRooms.js";
 
-const HIGH_CONFIDENCE_FIRE_THRESHOLD = 0.8;
+const HIGH_CONFIDENCE_FIRE_THRESHOLD = 0.9;
 const DEFAULT_CONFIRMATION_WINDOW_MS = 10_000;
 const DEFAULT_LOCATION_CENTER = { lat: 40.7128, lng: -74.006 };
 const pendingEscalationTimers = new Map();
@@ -16,6 +16,16 @@ const getConfirmationWindowMs = () => {
 };
 
 const FIRE_CONFIRMATION_WINDOW_MS = getConfirmationWindowMs();
+
+const shouldRequireOperatorConfirmation = () => {
+  const raw = String(process.env.FIRE_REQUIRE_OPERATOR_CONFIRMATION || "true")
+    .trim()
+    .toLowerCase();
+
+  return !["false", "0", "no", "off"].includes(raw);
+};
+
+const REQUIRE_OPERATOR_CONFIRMATION = shouldRequireOperatorConfirmation();
 
 const asStatusError = (statusCode, message) => {
   const error = new Error(message);
@@ -103,6 +113,7 @@ const buildRealtimePayload = (incident, extra = {}) => ({
     ? new Date(incident.confirmationDeadline).toISOString()
     : null,
   escalatedAt: incident.escalatedAt ? new Date(incident.escalatedAt).toISOString() : null,
+  requiresOperatorConfirmation: REQUIRE_OPERATOR_CONFIRMATION,
   timestamp: new Date().toISOString(),
   incident,
   ...extra,
@@ -111,7 +122,7 @@ const buildRealtimePayload = (incident, extra = {}) => ({
 const emitConfirmationRequested = (io, incident, source = "detected") => {
   emitToRoles(io, ["admin", "operator"], "fire:confirmation_requested", {
     ...buildRealtimePayload(incident, { source }),
-    timeoutMs: FIRE_CONFIRMATION_WINDOW_MS,
+    timeoutMs: REQUIRE_OPERATOR_CONFIRMATION ? null : FIRE_CONFIRMATION_WINDOW_MS,
   });
 };
 
@@ -165,30 +176,9 @@ const scheduleEscalationTimer = ({ incident, io, notifyOperators = false, source
 
   clearEscalationTimer(incident.id);
 
-  const deadlineDate = incident.confirmationDeadline
-    ? new Date(incident.confirmationDeadline)
-    : new Date(Date.now() + FIRE_CONFIRMATION_WINDOW_MS);
-
-  const delayMs = deadlineDate.getTime() - Date.now();
-
   if (notifyOperators) {
     emitConfirmationRequested(io, incident, source);
   }
-
-  if (delayMs <= 0) {
-    void autoEscalatePendingIncident({ incidentId: incident.id, io });
-    return;
-  }
-
-  const timer = setTimeout(() => {
-    void autoEscalatePendingIncident({ incidentId: incident.id, io });
-  }, delayMs);
-
-  if (typeof timer.unref === "function") {
-    timer.unref();
-  }
-
-  pendingEscalationTimers.set(incident.id, timer);
 };
 
 export const isHighConfidenceFire = (confidence) => {
@@ -224,8 +214,10 @@ export const createOrRefreshFireIncidentFromDetection = async ({
     }
 
     if (!existing.confirmationDeadline && existing.status === "pending_confirmation") {
-      existing.confirmationDeadline = new Date(Date.now() + FIRE_CONFIRMATION_WINDOW_MS);
-      changed = true;
+      if (!REQUIRE_OPERATOR_CONFIRMATION) {
+        existing.confirmationDeadline = new Date(Date.now() + FIRE_CONFIRMATION_WINDOW_MS);
+        changed = true;
+      }
     }
 
     if (snapshotBase64 && !existing.snapshotBase64) {
@@ -254,7 +246,9 @@ export const createOrRefreshFireIncidentFromDetection = async ({
   }
 
   const now = new Date();
-  const deadline = new Date(now.getTime() + FIRE_CONFIRMATION_WINDOW_MS);
+  const deadline = REQUIRE_OPERATOR_CONFIRMATION
+    ? undefined
+    : new Date(now.getTime() + FIRE_CONFIRMATION_WINDOW_MS);
   const cameraName = typeof camera?.name === "string" && camera.name.trim() ? camera.name.trim() : "camera";
 
   let createdIncident = null;
@@ -401,4 +395,5 @@ export const shutdownFireEscalationService = () => {
 export const fireEscalationConfig = {
   highConfidenceThreshold: HIGH_CONFIDENCE_FIRE_THRESHOLD,
   confirmationWindowMs: FIRE_CONFIRMATION_WINDOW_MS,
+  requireOperatorConfirmation: REQUIRE_OPERATOR_CONFIRMATION,
 };

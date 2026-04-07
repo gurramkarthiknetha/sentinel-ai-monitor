@@ -6,6 +6,8 @@ const CLASS_NAME_TO_ID = new Map([
   ["fire", 80],
   ["flame", 80],
   ["smoke", 81],
+  ["crowd", 82],
+  ["people", 82],
   ["stampede", 82],
   ["medical emergency", 83],
   ["person", 0],

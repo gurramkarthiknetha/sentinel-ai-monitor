@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { FireEscalationRealtime } from "@/components/FireEscalationRealtime";
@@ -8,6 +9,7 @@ import { getIncidents } from "@/lib/incidentsApi";
 import { Badge } from "@/components/ui/badge";
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
   const setIncidents = useIncidentStore((s) => s.setIncidents);
   const activeCount = useIncidentStore((s) =>
     s.incidents.filter((i) => ["active", "pending_confirmation", "escalated"].includes(i.status)).length
@@ -39,7 +41,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <div className="flex-1 flex flex-col min-w-0">
-          <FireEscalationRealtime />
+          {location.pathname === "/monitoring" ? null : <FireEscalationRealtime />}
           <header className="h-14 flex items-center justify-between border-b border-border px-4 bg-card/50 backdrop-blur-sm sticky top-0 z-30">
             <div className="flex items-center gap-3">
               <SidebarTrigger className="text-muted-foreground hover:text-foreground" />

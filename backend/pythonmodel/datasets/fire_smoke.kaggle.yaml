@@ -1,8 +1,0 @@
-path: /Users/karthikgurram/clg/intern/sentinel-ai-monitor/backend/pythonmodel/datasets/prepared/firesmoke_v9
-train: images/train
-val: images/val
-test: images/test
-nc: 2
-names:
-- fire
-- smoke

@@ -46,10 +46,13 @@ VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
 WEAPON_HINTS = {"knife", "gun", "rifle", "pistol", "scissors", "baseball bat"}
 DEFAULT_FIRE_CLASS_NAMES = ["fire", "flame"]
 DEFAULT_SMOKE_CLASS_NAMES = ["smoke"]
+DEFAULT_CROWD_CLASS_NAMES = ["crowd", "person", "people"]
 SEMANTIC_CLASS_IDS = {
     "fire": 80,
     "flame": 80,
     "smoke": 81,
+    "crowd": 82,
+    "people": 82,
     "stampede": 82,
     "medical emergency": 83,
 }
@@ -76,6 +79,16 @@ def parse_float(value: str | None, fallback: float) -> float:
         return fallback
 
     return parsed
+
+
+def parse_int(value: str | None, fallback: int) -> int:
+    if value is None:
+        return fallback
+
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return fallback
 
 
 def parse_bool(value: str | None, fallback: bool) -> bool:
@@ -113,6 +126,7 @@ def now_iso() -> str:
 def default_scores() -> Dict[str, float]:
     return {
         "person": 0.0,
+        "crowd": 0.0,
         "stampede": 0.0,
         "medical_emergency": 0.0,
         "fire": 0.0,
@@ -127,6 +141,54 @@ def default_scores() -> Dict[str, float]:
     }
 
 
+def discover_finetuned_weights() -> List[Path]:
+    pythonmodel_root = Path(__file__).resolve().parent
+    project_root = pythonmodel_root.parent.parent
+
+    search_roots = [
+        pythonmodel_root / "runs",
+        project_root / "runs",
+    ]
+
+    candidates: List[Path] = []
+    for root in search_roots:
+        if not root.exists():
+            continue
+
+        candidates.extend(entry for entry in root.rglob("weights/best.pt") if entry.is_file())
+        candidates.extend(entry for entry in root.rglob("weights/last.pt") if entry.is_file())
+
+    # Deduplicate in case overlapping roots resolve to the same files.
+    unique_candidates: dict[str, Path] = {}
+    for candidate in candidates:
+        try:
+            unique_candidates[str(candidate.resolve())] = candidate
+        except OSError:
+            unique_candidates[str(candidate)] = candidate
+
+    candidates = list(unique_candidates.values())
+    if not candidates:
+        return []
+
+    prioritized = [
+        entry
+        for entry in candidates
+        if any(keyword in str(entry).lower() for keyword in ("fire", "smoke", "crowd"))
+    ]
+    selected = prioritized or candidates
+
+    def safe_mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    selected.sort(
+        key=lambda path: (not str(path).endswith("weights/best.pt"), -safe_mtime(path)),
+    )
+    return selected[:8]
+
+
 def resolve_model_source() -> str:
     candidates = []
 
@@ -134,11 +196,14 @@ def resolve_model_source() -> str:
     if env_path:
         candidates.append(Path(env_path))
 
+    candidates.extend(discover_finetuned_weights())
+
     local_candidates = [
         Path(__file__).resolve().parent / "runs" / "fire_detector" / "weights" / "best.pt",
         Path(__file__).resolve().parent / "runs" / "detect" / "fire_detector" / "weights" / "best.pt",
         Path(__file__).resolve().parent / "app" / "ml" / "models" / "yolov8n.pt",
         Path(__file__).resolve().parent / "models" / "yolov8n.pt",
+        Path(__file__).resolve().parent / "yolo26n.pt",
         Path(__file__).resolve().parent / "yolov8n.pt",
     ]
     candidates.extend(local_candidates)
@@ -150,7 +215,7 @@ def resolve_model_source() -> str:
     return "yolov8n.pt"
 
 
-YOLO_CONFIDENCE = parse_float(os.getenv("YOLO_CONFIDENCE", "0.25"), 0.25)
+YOLO_CONFIDENCE = parse_float(os.getenv("YOLO_CONFIDENCE", "0.15"), 0.15)
 YOLO_IOU = parse_float(os.getenv("YOLO_IOU", "0.45"), 0.45)
 CORS_ORIGINS = parse_csv(os.getenv("YOLO_CORS_ORIGINS"), DEFAULT_CORS_ORIGINS)
 FIRE_CLASS_NAMES = normalize_label_set(
@@ -161,12 +226,72 @@ SMOKE_CLASS_NAMES = normalize_label_set(
     parse_csv(os.getenv("YOLO_SMOKE_CLASS_NAMES"), DEFAULT_SMOKE_CLASS_NAMES),
     DEFAULT_SMOKE_CLASS_NAMES,
 )
+CROWD_CLASS_NAMES = normalize_label_set(
+    parse_csv(os.getenv("YOLO_CROWD_CLASS_NAMES"), DEFAULT_CROWD_CLASS_NAMES),
+    DEFAULT_CROWD_CLASS_NAMES,
+)
 YOLO_FIRE_ALERT_THRESHOLD = clamp(
-    parse_float(os.getenv("YOLO_FIRE_ALERT_THRESHOLD", "0.45"), 0.45),
+    parse_float(os.getenv("YOLO_FIRE_ALERT_THRESHOLD", "0.90"), 0.90),
     0.0,
     1.0,
 )
-YOLO_COLOR_FALLBACK_ENABLED = parse_bool(os.getenv("YOLO_COLOR_FALLBACK_ENABLED"), True)
+YOLO_SMOKE_ALERT_THRESHOLD = clamp(
+    parse_float(os.getenv("YOLO_SMOKE_ALERT_THRESHOLD", "0.50"), 0.50),
+    0.0,
+    1.0,
+)
+YOLO_FIRE_CLASS_CONFIDENCE_MIN = clamp(
+    parse_float(os.getenv("YOLO_FIRE_CLASS_CONFIDENCE_MIN", "0.20"), 0.20),
+    0.0,
+    1.0,
+)
+YOLO_SMOKE_CLASS_CONFIDENCE_MIN = clamp(
+    parse_float(os.getenv("YOLO_SMOKE_CLASS_CONFIDENCE_MIN", "0.30"), 0.30),
+    0.0,
+    1.0,
+)
+YOLO_SMOKE_TO_FIRE_PROMOTION_ENABLED = parse_bool(
+    os.getenv("YOLO_SMOKE_TO_FIRE_PROMOTION_ENABLED"),
+    True,
+)
+YOLO_SMOKE_TO_FIRE_MIN_CONFIDENCE = clamp(
+    parse_float(os.getenv("YOLO_SMOKE_TO_FIRE_MIN_CONFIDENCE", "0.30"), 0.30),
+    0.0,
+    1.0,
+)
+YOLO_SMOKE_TO_FIRE_MIN_COLOR_SIGNAL = clamp(
+    parse_float(os.getenv("YOLO_SMOKE_TO_FIRE_MIN_COLOR_SIGNAL", "0.12"), 0.12),
+    0.0,
+    1.0,
+)
+YOLO_SMOKE_TO_FIRE_MIN_FIRE_TO_SMOKE_RATIO = clamp(
+    parse_float(os.getenv("YOLO_SMOKE_TO_FIRE_MIN_FIRE_TO_SMOKE_RATIO", "0.70"), 0.70),
+    0.0,
+    2.0,
+)
+YOLO_FIRE_MIN_BOX_AREA_RATIO = clamp(
+    parse_float(os.getenv("YOLO_FIRE_MIN_BOX_AREA_RATIO", "0.0002"), 0.0002),
+    0.0,
+    1.0,
+)
+YOLO_SMOKE_MIN_BOX_AREA_RATIO = clamp(
+    parse_float(os.getenv("YOLO_SMOKE_MIN_BOX_AREA_RATIO", "0.0004"), 0.0004),
+    0.0,
+    1.0,
+)
+YOLO_HAZARD_MAX_BOX_AREA_RATIO = clamp(
+    parse_float(os.getenv("YOLO_HAZARD_MAX_BOX_AREA_RATIO", "0.99"), 0.99),
+    0.01,
+    1.0,
+)
+YOLO_ENABLE_CONTEXT_PERSON_MODEL = parse_bool(os.getenv("YOLO_ENABLE_CONTEXT_PERSON_MODEL"), True)
+YOLO_CONTEXT_PERSON_CONFIDENCE = clamp(
+    parse_float(os.getenv("YOLO_CONTEXT_PERSON_CONFIDENCE", "0.25"), 0.25),
+    0.0,
+    1.0,
+)
+YOLO_COLOR_FALLBACK_ENABLED = parse_bool(os.getenv("YOLO_COLOR_FALLBACK_ENABLED"), False)
+YOLO_COLOR_SCORE_ENABLED = parse_bool(os.getenv("YOLO_COLOR_SCORE_ENABLED"), False)
 YOLO_COLOR_MIN_REGION_RATIO = clamp(
     parse_float(os.getenv("YOLO_COLOR_MIN_REGION_RATIO", "0.0015"), 0.0015),
     0.00001,
@@ -176,6 +301,20 @@ YOLO_COLOR_MAX_REGION_RATIO = clamp(
     parse_float(os.getenv("YOLO_COLOR_MAX_REGION_RATIO", "0.95"), 0.95),
     0.001,
     1.0,
+)
+YOLO_STAMPEDE_MIN_PERSON_COUNT = max(
+    2,
+    parse_int(os.getenv("YOLO_STAMPEDE_MIN_PERSON_COUNT", "9"), 9),
+)
+YOLO_STAMPEDE_SCORE_THRESHOLD = clamp(
+    parse_float(os.getenv("YOLO_STAMPEDE_SCORE_THRESHOLD", "55"), 55.0),
+    0.0,
+    100.0,
+)
+YOLO_STAMPEDE_ALERT_CONFIDENCE_MIN = clamp(
+    parse_float(os.getenv("YOLO_STAMPEDE_ALERT_CONFIDENCE_MIN", "0.90"), 0.90),
+    0.0,
+    0.99,
 )
 
 MODEL_SOURCE = resolve_model_source()
@@ -188,6 +327,89 @@ try:
 except Exception as error:  # pragma: no cover - runtime dependency issue
     MODEL_ERROR = str(error)
     LOGGER.exception("Failed to load YOLO model")
+
+
+def resolve_model_class_labels(model: YOLO | None) -> set[str]:
+    if model is None:
+        return set()
+
+    if not isinstance(model.names, dict):
+        return set()
+
+    return {normalize_label(value) for value in model.names.values() if normalize_label(value)}
+
+
+def resolve_context_model_source(primary_source: str) -> str | None:
+    primary_path = Path(primary_source).resolve()
+    candidates: List[Path] = []
+
+    env_path = os.getenv("YOLO_CONTEXT_MODEL_PATH", "").strip()
+    if env_path:
+        candidates.append(Path(env_path))
+
+    candidates.extend(
+        [
+            Path(__file__).resolve().parent / "yolo26n.pt",
+            Path(__file__).resolve().parent / "yolov8n.pt",
+        ]
+    )
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+
+        try:
+            if candidate.resolve() == primary_path:
+                continue
+        except OSError:
+            pass
+
+        return str(candidate)
+
+    return None
+
+
+MODEL_CLASS_LABELS = resolve_model_class_labels(yolo_model)
+MODEL_HAS_FIRE_CLASSES = any(label in FIRE_CLASS_NAMES for label in MODEL_CLASS_LABELS)
+MODEL_HAS_SMOKE_CLASSES = any(label in SMOKE_CLASS_NAMES for label in MODEL_CLASS_LABELS)
+MODEL_HAS_CROWD_CLASSES = any(label in CROWD_CLASS_NAMES for label in MODEL_CLASS_LABELS)
+MODEL_HAS_PERSON_CLASS = "person" in MODEL_CLASS_LABELS
+
+CONTEXT_MODEL_SOURCE = (
+    resolve_context_model_source(MODEL_SOURCE)
+    if YOLO_ENABLE_CONTEXT_PERSON_MODEL and not MODEL_HAS_PERSON_CLASS and not MODEL_HAS_CROWD_CLASSES
+    else None
+)
+CONTEXT_MODEL_ERROR = ""
+context_person_model: YOLO | None = None
+
+if CONTEXT_MODEL_SOURCE:
+    try:
+        context_person_model = YOLO(CONTEXT_MODEL_SOURCE)
+        LOGGER.info("Context person model loaded from %s", CONTEXT_MODEL_SOURCE)
+    except Exception as error:  # pragma: no cover - runtime dependency issue
+        CONTEXT_MODEL_ERROR = str(error)
+        LOGGER.exception("Failed to load context person model")
+
+if yolo_model is not None and not MODEL_HAS_FIRE_CLASSES:
+    LOGGER.warning(
+        "Loaded model does not include configured fire classes: %s",
+        sorted(FIRE_CLASS_NAMES),
+    )
+
+if yolo_model is not None and not MODEL_HAS_SMOKE_CLASSES:
+    LOGGER.warning(
+        "Loaded model does not include configured smoke classes: %s",
+        sorted(SMOKE_CLASS_NAMES),
+    )
+
+if yolo_model is not None and not MODEL_HAS_PERSON_CLASS and not MODEL_HAS_CROWD_CLASSES:
+    if context_person_model is None:
+        LOGGER.warning(
+            "Primary model has no crowd/person class and no context model was loaded. Crowd detections are disabled."
+        )
+    else:
+        LOGGER.info("Primary model has no crowd/person class; crowd detections will use context model.")
 
 
 def decode_image(contents: bytes) -> np.ndarray:
@@ -203,6 +425,10 @@ def is_fire_label(class_name: str) -> bool:
 
 def is_smoke_label(class_name: str) -> bool:
     return normalize_label(class_name) in SMOKE_CLASS_NAMES
+
+
+def is_crowd_label(class_name: str) -> bool:
+    return normalize_label(class_name) in CROWD_CLASS_NAMES
 
 
 def semantic_class_id(class_name: str, fallback_class_id: int) -> int:
@@ -309,12 +535,16 @@ def extract_color_fallback_detections(
     return detections
 
 
-def run_yolo(frame: np.ndarray) -> List[Dict[str, Any]]:
-    if yolo_model is None:
-        raise HTTPException(status_code=503, detail="YOLO model is not loaded")
-
-    results = yolo_model.predict(frame, conf=YOLO_CONFIDENCE, iou=YOLO_IOU, verbose=False)
+def run_model_inference(
+    model: YOLO,
+    frame: np.ndarray,
+    confidence_threshold: float,
+    source_label: str,
+    allowed_classes: set[str] | None = None,
+) -> List[Dict[str, Any]]:
+    results = model.predict(frame, conf=confidence_threshold, iou=YOLO_IOU, verbose=False)
     detections: List[Dict[str, Any]] = []
+    model_names = model.names if isinstance(model.names, dict) else {}
 
     for result in results:
         boxes = result.boxes
@@ -325,7 +555,12 @@ def run_yolo(frame: np.ndarray) -> List[Dict[str, Any]]:
             coords = boxes.xyxy[index].cpu().numpy()
             confidence = float(boxes.conf[index].cpu().numpy())
             model_class_id = int(boxes.cls[index].cpu().numpy())
-            class_name = str(yolo_model.names.get(model_class_id, f"class_{model_class_id}"))
+            class_name = str(model_names.get(model_class_id, f"class_{model_class_id}"))
+            normalized_class = normalize_label(class_name)
+
+            if allowed_classes is not None and normalized_class not in allowed_classes:
+                continue
+
             class_id = semantic_class_id(class_name, model_class_id)
 
             x1, y1, x2, y2 = [float(value) for value in coords]
@@ -337,7 +572,7 @@ def run_yolo(frame: np.ndarray) -> List[Dict[str, Any]]:
                     "class": class_name,
                     "confidence": round(confidence, 4),
                     "class_id": class_id,
-                    "source": "yolo",
+                    "source": source_label,
                     "bbox": {
                         "x1": x1,
                         "y1": y1,
@@ -351,6 +586,31 @@ def run_yolo(frame: np.ndarray) -> List[Dict[str, Any]]:
                     },
                 }
             )
+
+    return detections
+
+
+def run_yolo(frame: np.ndarray) -> List[Dict[str, Any]]:
+    if yolo_model is None:
+        raise HTTPException(status_code=503, detail="YOLO model is not loaded")
+
+    detections = run_model_inference(
+        yolo_model,
+        frame,
+        confidence_threshold=YOLO_CONFIDENCE,
+        source_label="yolo",
+    )
+
+    if not MODEL_HAS_PERSON_CLASS and not MODEL_HAS_CROWD_CLASSES and context_person_model is not None:
+        detections.extend(
+            run_model_inference(
+                context_person_model,
+                frame,
+                confidence_threshold=YOLO_CONTEXT_PERSON_CONFIDENCE,
+                source_label="context_person",
+                allowed_classes={"person"},
+            )
+        )
 
     return detections
 
@@ -382,7 +642,7 @@ def score_detections(detections: List[Dict[str, Any]], frame_shape: tuple[int, i
         class_name = str(detection["class"]).lower()
         object_counts[class_name] = object_counts.get(class_name, 0) + 1
 
-        if class_name == "person":
+        if is_crowd_label(class_name):
             person_detections.append(detection)
 
         if any(hint in class_name for hint in WEAPON_HINTS):
@@ -397,6 +657,7 @@ def score_detections(detections: List[Dict[str, Any]], frame_shape: tuple[int, i
 
     if person_detections:
         scores["person"] = max(item["confidence"] * 100 for item in person_detections)
+        scores["crowd"] = scores["person"]
 
     crowd_density = min(100.0, person_count * 11.0 + person_area_ratio * 250.0)
     scores["crowd_density"] = crowd_density
@@ -414,8 +675,11 @@ def score_detections(detections: List[Dict[str, Any]], frame_shape: tuple[int, i
         scores["fallen"] = max(item["confidence"] * 100 for item in fallen_persons)
         scores["medical_emergency"] = max(60.0, scores["fallen"] * 0.9)
 
-    if person_count > 8:
-        scores["stampede"] = min(100.0, crowd_density * 0.9 + (person_count - 8) * 4.0)
+    if person_count >= YOLO_STAMPEDE_MIN_PERSON_COUNT:
+        scores["stampede"] = min(
+            100.0,
+            crowd_density * 0.9 + (person_count - YOLO_STAMPEDE_MIN_PERSON_COUNT + 1) * 4.0,
+        )
 
     if weapon_detections:
         scores["weapon"] = max(item["confidence"] * 100 for item in weapon_detections)
@@ -443,7 +707,9 @@ def apply_fire_smoke_scores(
     detections: List[Dict[str, Any]],
     frame: np.ndarray,
 ) -> Dict[str, float]:
-    color_signals = detect_fire_smoke_by_color(frame)
+    color_signals = {"fire": 0.0, "smoke": 0.0}
+    if YOLO_COLOR_SCORE_ENABLED:
+        color_signals = detect_fire_smoke_by_color(frame)
 
     yolo_fire = [item["confidence"] for item in detections if is_fire_label(str(item["class"]))]
     yolo_smoke = [item["confidence"] for item in detections if is_smoke_label(str(item["class"]))]
@@ -455,6 +721,98 @@ def apply_fire_smoke_scores(
     scores["smoke"] = round(smoke_score, 2)
 
     return scores
+
+
+def filter_hazard_detections(
+    detections: List[Dict[str, Any]],
+    frame_shape: tuple[int, int, int],
+) -> List[Dict[str, Any]]:
+    frame_area = float(frame_shape[0] * frame_shape[1])
+    if frame_area <= 0:
+        return detections
+
+    filtered: List[Dict[str, Any]] = []
+
+    for detection in detections:
+        class_name = str(detection.get("class", ""))
+
+        if is_fire_label(class_name):
+            min_conf = YOLO_FIRE_CLASS_CONFIDENCE_MIN
+            min_area_ratio = YOLO_FIRE_MIN_BOX_AREA_RATIO
+        elif is_smoke_label(class_name):
+            min_conf = YOLO_SMOKE_CLASS_CONFIDENCE_MIN
+            min_area_ratio = YOLO_SMOKE_MIN_BOX_AREA_RATIO
+        else:
+            filtered.append(detection)
+            continue
+
+        confidence = float(detection.get("confidence", 0.0))
+        bbox = detection.get("bbox") if isinstance(detection.get("bbox"), dict) else {}
+        width = float(bbox.get("width", 0.0))
+        height = float(bbox.get("height", 0.0))
+        area = float(bbox.get("area", max(0.0, width * height)))
+        area_ratio = area / frame_area
+
+        if confidence < min_conf:
+            continue
+
+        if area_ratio < min_area_ratio or area_ratio > YOLO_HAZARD_MAX_BOX_AREA_RATIO:
+            continue
+
+        filtered.append(detection)
+
+    return filtered
+
+
+def promote_smoke_to_fire_if_needed(
+    detections: List[Dict[str, Any]],
+    frame: np.ndarray,
+) -> List[Dict[str, Any]]:
+    if not YOLO_SMOKE_TO_FIRE_PROMOTION_ENABLED:
+        return detections
+
+    if any(is_fire_label(str(item.get("class", ""))) for item in detections):
+        return detections
+
+    smoke_detections = [
+        item
+        for item in detections
+        if is_smoke_label(str(item.get("class", "")))
+        and float(item.get("confidence", 0.0)) >= YOLO_SMOKE_TO_FIRE_MIN_CONFIDENCE
+    ]
+    if not smoke_detections:
+        return detections
+
+    color_signals = detect_fire_smoke_by_color(frame)
+    fire_signal = float(color_signals.get("fire", 0.0))
+    smoke_signal = float(color_signals.get("smoke", 0.0))
+
+    if fire_signal < YOLO_SMOKE_TO_FIRE_MIN_COLOR_SIGNAL:
+        return detections
+
+    if smoke_signal > 0:
+        signal_ratio = fire_signal / smoke_signal
+        if signal_ratio < YOLO_SMOKE_TO_FIRE_MIN_FIRE_TO_SMOKE_RATIO:
+            return detections
+
+    if fire_signal <= 0:
+        return detections
+
+    top_smoke = max(smoke_detections, key=lambda item: float(item.get("confidence", 0.0)))
+    promoted_confidence = round(
+        clamp(float(top_smoke.get("confidence", 0.0)), 0.0, 0.99),
+        4,
+    )
+
+    promoted_detection = {
+        **top_smoke,
+        "class": "fire",
+        "class_id": SEMANTIC_CLASS_IDS["fire"],
+        "confidence": promoted_confidence,
+        "source": "smoke_promoted_fire",
+    }
+
+    return [*detections, promoted_detection]
 
 
 def build_fire_detection_summary(detections: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -483,7 +841,7 @@ def build_fire_detection_summary(detections: List[Dict[str, Any]]) -> Dict[str, 
             }
             for item in fire_detections[:10]
         ],
-        "smoke_detected": any(conf >= 0.35 for conf in smoke_confidences),
+        "smoke_detected": any(conf >= YOLO_SMOKE_ALERT_THRESHOLD for conf in smoke_confidences),
         "smoke_count": len(smoke_detections),
         "max_smoke_confidence": round(max(smoke_confidences, default=0.0), 4),
         "smoke_boxes": [
@@ -499,6 +857,73 @@ def build_fire_detection_summary(detections: List[Dict[str, Any]]) -> Dict[str, 
             for item in smoke_detections[:10]
         ],
         "alert_threshold": YOLO_FIRE_ALERT_THRESHOLD,
+        "smoke_alert_threshold": YOLO_SMOKE_ALERT_THRESHOLD,
+    }
+
+
+def build_stampede_alert_detection(
+    detections: List[Dict[str, Any]],
+    scores: Dict[str, float],
+    person_count: int,
+    frame_shape: tuple[int, int, int],
+) -> Dict[str, Any] | None:
+    if person_count < YOLO_STAMPEDE_MIN_PERSON_COUNT:
+        return None
+
+    stampede_score = float(scores.get("stampede", 0.0))
+    if stampede_score < YOLO_STAMPEDE_SCORE_THRESHOLD:
+        return None
+
+    frame_height = float(frame_shape[0])
+    frame_width = float(frame_shape[1])
+    if frame_width <= 0 or frame_height <= 0:
+        return None
+
+    crowd_detections = [
+        item
+        for item in detections
+        if is_crowd_label(str(item.get("class", ""))) and isinstance(item.get("bbox"), dict)
+    ]
+
+    if crowd_detections:
+        x1 = min(float(item["bbox"].get("x1", 0.0)) for item in crowd_detections)
+        y1 = min(float(item["bbox"].get("y1", 0.0)) for item in crowd_detections)
+        x2 = max(float(item["bbox"].get("x2", frame_width)) for item in crowd_detections)
+        y2 = max(float(item["bbox"].get("y2", frame_height)) for item in crowd_detections)
+    else:
+        x1 = 0.0
+        y1 = 0.0
+        x2 = frame_width
+        y2 = frame_height
+
+    x1 = clamp(x1, 0.0, frame_width)
+    y1 = clamp(y1, 0.0, frame_height)
+    x2 = clamp(x2, x1 + 1.0, frame_width)
+    y2 = clamp(y2, y1 + 1.0, frame_height)
+
+    width = max(1.0, x2 - x1)
+    height = max(1.0, y2 - y1)
+    confidence = round(
+        clamp(max(stampede_score / 100.0, YOLO_STAMPEDE_ALERT_CONFIDENCE_MIN), 0.0, 0.99),
+        4,
+    )
+
+    return {
+        "class": "stampede",
+        "confidence": confidence,
+        "class_id": SEMANTIC_CLASS_IDS["stampede"],
+        "source": "stampede_heuristic",
+        "bbox": {
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+            "width": width,
+            "height": height,
+            "center_x": x1 + width / 2,
+            "center_y": y1 + height / 2,
+            "area": width * height,
+        },
     }
 
 
@@ -509,7 +934,7 @@ def build_risk_assessment(scores: Dict[str, float], person_count: int, object_co
         alerts.append("Potential fire-like visual pattern detected")
     if scores["smoke"] >= 45:
         alerts.append("Potential smoke-like visual pattern detected")
-    if scores["stampede"] >= 55:
+    if scores["stampede"] >= YOLO_STAMPEDE_SCORE_THRESHOLD:
         alerts.append(f"Stampede risk inferred from crowd behavior ({person_count} persons)")
     if scores["medical_emergency"] >= 60:
         alerts.append("Potential fallen-person medical emergency detected")
@@ -529,7 +954,7 @@ def build_risk_assessment(scores: Dict[str, float], person_count: int, object_co
     emergency_type = None
     if scores["fire"] >= 40:
         emergency_type = "fire"
-    elif scores["stampede"] >= 55:
+    elif scores["stampede"] >= YOLO_STAMPEDE_SCORE_THRESHOLD:
         emergency_type = "stampede"
     elif scores["medical_emergency"] >= 60:
         emergency_type = "medical_emergency"
@@ -621,7 +1046,20 @@ async def health() -> Dict[str, Any]:
         "model_error": MODEL_ERROR or None,
         "fire_class_names": sorted(FIRE_CLASS_NAMES),
         "smoke_class_names": sorted(SMOKE_CLASS_NAMES),
+        "crowd_class_names": sorted(CROWD_CLASS_NAMES),
+        "model_has_fire_classes": MODEL_HAS_FIRE_CLASSES,
+        "model_has_smoke_classes": MODEL_HAS_SMOKE_CLASSES,
+        "model_has_crowd_classes": MODEL_HAS_CROWD_CLASSES,
+        "model_has_person_class": MODEL_HAS_PERSON_CLASS,
+        "context_person_model_enabled": YOLO_ENABLE_CONTEXT_PERSON_MODEL,
+        "context_person_model_loaded": context_person_model is not None,
+        "context_person_model_source": CONTEXT_MODEL_SOURCE,
+        "context_person_model_error": CONTEXT_MODEL_ERROR or None,
         "color_fallback_enabled": YOLO_COLOR_FALLBACK_ENABLED,
+        "color_score_enabled": YOLO_COLOR_SCORE_ENABLED,
+        "stampede_min_person_count": YOLO_STAMPEDE_MIN_PERSON_COUNT,
+        "stampede_score_threshold": YOLO_STAMPEDE_SCORE_THRESHOLD,
+        "stampede_alert_confidence_min": YOLO_STAMPEDE_ALERT_CONFIDENCE_MIN,
     }
 
 
@@ -661,22 +1099,46 @@ async def analyze_frame(file: UploadFile = File(...), camera_id: str = Form("sys
         detections = run_yolo(frame)
 
         if YOLO_COLOR_FALLBACK_ENABLED:
-            has_yolo_fire = any(is_fire_label(str(item["class"])) for item in detections)
-            has_yolo_smoke = any(is_smoke_label(str(item["class"])) for item in detections)
+            has_yolo_fire = any(
+                item.get("source") == "yolo" and is_fire_label(str(item["class"]))
+                for item in detections
+            )
+            has_yolo_smoke = any(
+                item.get("source") == "yolo" and is_smoke_label(str(item["class"]))
+                for item in detections
+            )
+
+            # If YOLO misses fire/smoke on a frame, optionally backfill with color-based cues.
+            include_fire_fallback = not has_yolo_fire
+            include_smoke_fallback = not has_yolo_smoke
+
             detections.extend(
                 extract_color_fallback_detections(
                     frame,
-                    include_fire=not has_yolo_fire,
-                    include_smoke=not has_yolo_smoke,
+                    include_fire=include_fire_fallback,
+                    include_smoke=include_smoke_fallback,
                 )
             )
 
+        detections = promote_smoke_to_fire_if_needed(detections, frame)
+
+        detections = filter_hazard_detections(detections, frame.shape)
+
         scored = score_detections(detections, frame.shape)
         scores = apply_fire_smoke_scores(scored["scores"], detections, frame)
-        fire_summary = build_fire_detection_summary(detections)
 
         object_counts = scored["object_counts"]
         person_count = scored["person_count"]
+        stampede_alert_detection = build_stampede_alert_detection(
+            detections,
+            scores,
+            person_count,
+            frame.shape,
+        )
+        if stampede_alert_detection is not None:
+            detections = [*detections, stampede_alert_detection]
+
+        fire_summary = build_fire_detection_summary(detections)
         timestamp = now_iso()
 
         risk = build_risk_assessment(scores, person_count, object_counts)
@@ -701,6 +1163,7 @@ async def analyze_frame(file: UploadFile = File(...), camera_id: str = Form("sys
                 "risk_level": risk["risk_level"],
                 "alerts": risk["alerts"],
                 "fire_alert": fire_summary["fire_detected"],
+                "stampede_alert": stampede_alert_detection is not None,
                 "confidence_stats": {
                     "average": round(avg_conf, 3),
                     "maximum": round(max(confidence_values, default=0.0), 3),
@@ -713,9 +1176,31 @@ async def analyze_frame(file: UploadFile = File(...), camera_id: str = Form("sys
             "processing_info": {
                 "model": "YOLOv8",
                 "model_source": MODEL_SOURCE,
+                "model_has_fire_classes": MODEL_HAS_FIRE_CLASSES,
+                "model_has_smoke_classes": MODEL_HAS_SMOKE_CLASSES,
+                "model_has_crowd_classes": MODEL_HAS_CROWD_CLASSES,
+                "model_has_person_class": MODEL_HAS_PERSON_CLASS,
+                "crowd_class_names": sorted(CROWD_CLASS_NAMES),
+                "context_person_model_enabled": YOLO_ENABLE_CONTEXT_PERSON_MODEL,
+                "context_person_model_loaded": context_person_model is not None,
+                "context_person_model_source": CONTEXT_MODEL_SOURCE,
+                "context_person_confidence": YOLO_CONTEXT_PERSON_CONFIDENCE,
                 "confidence_threshold": YOLO_CONFIDENCE,
                 "iou_threshold": YOLO_IOU,
                 "color_fallback_enabled": YOLO_COLOR_FALLBACK_ENABLED,
+                "color_score_enabled": YOLO_COLOR_SCORE_ENABLED,
+                "fire_confidence_min": YOLO_FIRE_CLASS_CONFIDENCE_MIN,
+                "smoke_confidence_min": YOLO_SMOKE_CLASS_CONFIDENCE_MIN,
+                "smoke_to_fire_promotion_enabled": YOLO_SMOKE_TO_FIRE_PROMOTION_ENABLED,
+                "smoke_to_fire_min_confidence": YOLO_SMOKE_TO_FIRE_MIN_CONFIDENCE,
+                "smoke_to_fire_min_color_signal": YOLO_SMOKE_TO_FIRE_MIN_COLOR_SIGNAL,
+                "smoke_to_fire_min_fire_to_smoke_ratio": YOLO_SMOKE_TO_FIRE_MIN_FIRE_TO_SMOKE_RATIO,
+                "fire_min_box_area_ratio": YOLO_FIRE_MIN_BOX_AREA_RATIO,
+                "smoke_min_box_area_ratio": YOLO_SMOKE_MIN_BOX_AREA_RATIO,
+                "hazard_max_box_area_ratio": YOLO_HAZARD_MAX_BOX_AREA_RATIO,
+                "stampede_min_person_count": YOLO_STAMPEDE_MIN_PERSON_COUNT,
+                "stampede_score_threshold": YOLO_STAMPEDE_SCORE_THRESHOLD,
+                "stampede_alert_confidence_min": YOLO_STAMPEDE_ALERT_CONFIDENCE_MIN,
             },
         }
 
@@ -735,6 +1220,12 @@ async def analyze_frame(file: UploadFile = File(...), camera_id: str = Form("sys
                 "cameraId": camera_id,
                 "scores": scores,
                 "fire": fire_summary,
+                "stampede": {
+                    "detected": stampede_alert_detection is not None,
+                    "personCount": person_count,
+                    "score": scores.get("stampede", 0.0),
+                    "minPersonCount": YOLO_STAMPEDE_MIN_PERSON_COUNT,
+                },
                 "timestamp": timestamp,
             },
         )
@@ -746,6 +1237,23 @@ async def analyze_frame(file: UploadFile = File(...), camera_id: str = Form("sys
                     "cameraId": camera_id,
                     "timestamp": timestamp,
                     "fire": fire_summary,
+                    "riskLevel": risk["risk_level"],
+                },
+            )
+
+        if stampede_alert_detection is not None:
+            await sio.emit(
+                "stampede:alert",
+                {
+                    "cameraId": camera_id,
+                    "timestamp": timestamp,
+                    "stampede": {
+                        "detected": True,
+                        "personCount": person_count,
+                        "score": scores.get("stampede", 0.0),
+                        "confidence": stampede_alert_detection["confidence"],
+                        "minPersonCount": YOLO_STAMPEDE_MIN_PERSON_COUNT,
+                    },
                     "riskLevel": risk["risk_level"],
                 },
             )
@@ -818,8 +1326,31 @@ async def model_info() -> JSONResponse:
                 "classes": classes,
                 "fire_class_names": sorted(FIRE_CLASS_NAMES),
                 "smoke_class_names": sorted(SMOKE_CLASS_NAMES),
+                "crowd_class_names": sorted(CROWD_CLASS_NAMES),
+                "model_has_fire_classes": MODEL_HAS_FIRE_CLASSES,
+                "model_has_smoke_classes": MODEL_HAS_SMOKE_CLASSES,
+                "model_has_crowd_classes": MODEL_HAS_CROWD_CLASSES,
+                "model_has_person_class": MODEL_HAS_PERSON_CLASS,
+                "context_person_model_enabled": YOLO_ENABLE_CONTEXT_PERSON_MODEL,
+                "context_person_model_loaded": context_person_model is not None,
+                "context_person_model_source": CONTEXT_MODEL_SOURCE,
+                "context_person_confidence": YOLO_CONTEXT_PERSON_CONFIDENCE,
                 "fire_alert_threshold": YOLO_FIRE_ALERT_THRESHOLD,
+                "smoke_alert_threshold": YOLO_SMOKE_ALERT_THRESHOLD,
                 "color_fallback_enabled": YOLO_COLOR_FALLBACK_ENABLED,
+                "color_score_enabled": YOLO_COLOR_SCORE_ENABLED,
+                "fire_confidence_min": YOLO_FIRE_CLASS_CONFIDENCE_MIN,
+                "smoke_confidence_min": YOLO_SMOKE_CLASS_CONFIDENCE_MIN,
+                "stampede_min_person_count": YOLO_STAMPEDE_MIN_PERSON_COUNT,
+                "stampede_score_threshold": YOLO_STAMPEDE_SCORE_THRESHOLD,
+                "stampede_alert_confidence_min": YOLO_STAMPEDE_ALERT_CONFIDENCE_MIN,
+                "smoke_to_fire_promotion_enabled": YOLO_SMOKE_TO_FIRE_PROMOTION_ENABLED,
+                "smoke_to_fire_min_confidence": YOLO_SMOKE_TO_FIRE_MIN_CONFIDENCE,
+                "smoke_to_fire_min_color_signal": YOLO_SMOKE_TO_FIRE_MIN_COLOR_SIGNAL,
+                "smoke_to_fire_min_fire_to_smoke_ratio": YOLO_SMOKE_TO_FIRE_MIN_FIRE_TO_SMOKE_RATIO,
+                "fire_min_box_area_ratio": YOLO_FIRE_MIN_BOX_AREA_RATIO,
+                "smoke_min_box_area_ratio": YOLO_SMOKE_MIN_BOX_AREA_RATIO,
+                "hazard_max_box_area_ratio": YOLO_HAZARD_MAX_BOX_AREA_RATIO,
                 "confidence_threshold": YOLO_CONFIDENCE,
                 "iou_threshold": YOLO_IOU,
                 "framework": "Ultralytics",
@@ -844,7 +1375,9 @@ async def supported_objects() -> JSONResponse:
             "all_classes": classes,
             "fire_class_names": sorted(FIRE_CLASS_NAMES),
             "smoke_class_names": sorted(SMOKE_CLASS_NAMES),
+            "crowd_class_names": sorted(CROWD_CLASS_NAMES),
             "derived_alerts": [
+                "crowd",
                 "stampede",
                 "medical_emergency",
                 "fire",

@@ -1,0 +1,7 @@
+path: /Users/karthikgurram/clg/intern/sentinel-ai-monitor/backend/pythonmodel/datasets/prepared/fire_crowd_yolo
+train: images/train
+val: images/val
+nc: 2
+names:
+- fire
+- crowd

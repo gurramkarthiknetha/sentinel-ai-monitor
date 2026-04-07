@@ -34,6 +34,9 @@ export interface CreateIncidentInput {
   predictionDetails?: string;
   snapshotUrl?: string;
   snapshotBase64?: string;
+  sourceCameraId?: string;
+  confirmationDeadline?: string;
+  escalatedAt?: string;
   notes?: string[];
   timestamp?: string;
   resolvedAt?: string;

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Flame, Siren } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,7 +30,7 @@ interface FirePromptState {
   incidentId: string;
   confidence: number;
   zone: string;
-  confirmationDeadline: string;
+  confirmationDeadline?: string;
 }
 
 const upsertIncidentInStore = (incoming: Incident) => {
@@ -74,7 +75,7 @@ const extractPromptState = (payload: FireRealtimePayload): FirePromptState | nul
       ? payload.confirmationDeadline
       : "";
 
-  if (!payload.incidentId || !deadline) {
+  if (!payload.incidentId) {
     return null;
   }
 
@@ -82,48 +83,21 @@ const extractPromptState = (payload: FireRealtimePayload): FirePromptState | nul
     incidentId: payload.incidentId,
     confidence: normalizeConfidence(payload.confidence),
     zone: payload.zone || "Unspecified zone",
-    confirmationDeadline: deadline,
+    confirmationDeadline: deadline || undefined,
   };
 };
 
 export function FireEscalationRealtime() {
   const { toast } = useToast();
+  const location = useLocation();
   const user = useAuthStore((state) => state.user);
   const [pendingPrompt, setPendingPrompt] = useState<FirePromptState | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [clockNowMs, setClockNowMs] = useState(() => Date.now());
 
-  const alarmRef = useRef<HTMLAudioElement | null>(null);
-  const escalatedAlarmedIdsRef = useRef<Set<string>>(new Set());
-
   const isOperator = user?.role === "operator";
   const isFireResponder = user?.role === "responder" && user.responderType === "fire";
-
-  const playAlarm = useCallback(async () => {
-    if (!alarmRef.current) {
-      return;
-    }
-
-    try {
-      alarmRef.current.currentTime = 0;
-      await alarmRef.current.play();
-    } catch {
-      // Browsers can block autoplay without prior user gesture.
-    }
-  }, []);
-
-  useEffect(() => {
-    const audio = new Audio("/Alarm.mp3");
-    audio.preload = "auto";
-    alarmRef.current = audio;
-
-    return () => {
-      if (alarmRef.current) {
-        alarmRef.current.pause();
-        alarmRef.current = null;
-      }
-    };
-  }, []);
+  const isMonitoringRoute = location.pathname === "/monitoring";
 
   useEffect(() => {
     if (!pendingPrompt) {
@@ -140,17 +114,19 @@ export function FireEscalationRealtime() {
   }, [pendingPrompt]);
 
   const secondsRemaining = useMemo(() => {
-    if (!pendingPrompt) {
-      return 0;
+    if (!pendingPrompt?.confirmationDeadline) {
+      return null;
     }
 
     const deadlineMs = new Date(pendingPrompt.confirmationDeadline).getTime();
     if (!Number.isFinite(deadlineMs)) {
-      return 0;
+      return null;
     }
 
     return Math.max(0, Math.ceil((deadlineMs - clockNowMs) / 1000));
   }, [clockNowMs, pendingPrompt]);
+
+  const hasCountdown = secondsRemaining !== null;
 
   useEffect(() => {
     let socket: ReturnType<typeof createMonitoringSocket> | undefined;
@@ -168,11 +144,16 @@ export function FireEscalationRealtime() {
 
       upsertIncidentInStore(payload);
 
-      if (payload.type === "fire" && payload.status === "pending_confirmation" && isOperator) {
+      if (
+        payload.type === "fire" &&
+        payload.status === "pending_confirmation" &&
+        isOperator &&
+        !isMonitoringRoute
+      ) {
         const deadline =
           typeof payload.confirmationDeadline === "string" && payload.confirmationDeadline.trim()
             ? payload.confirmationDeadline
-            : new Date(Date.now() + 10_000).toISOString();
+            : undefined;
 
         setPendingPrompt({
           incidentId: payload.id,
@@ -182,23 +163,13 @@ export function FireEscalationRealtime() {
         });
       }
 
-      if (
-        payload.type === "fire" &&
-        payload.status === "escalated" &&
-        (isOperator || isFireResponder) &&
-        !escalatedAlarmedIdsRef.current.has(payload.id)
-      ) {
-        escalatedAlarmedIdsRef.current.add(payload.id);
-        void playAlarm();
-      }
-
       if (payload.status !== "pending_confirmation" && pendingPrompt?.incidentId === payload.id) {
         setPendingPrompt(null);
       }
     };
 
     const onConfirmationRequested = (payload: FireRealtimePayload) => {
-      if (!isOperator) {
+      if (!isOperator || isMonitoringRoute) {
         return;
       }
 
@@ -221,15 +192,6 @@ export function FireEscalationRealtime() {
         setPendingPrompt(null);
       }
 
-      if (
-        payload.status === "escalated" &&
-        payload.incidentId &&
-        (isOperator || isFireResponder) &&
-        !escalatedAlarmedIdsRef.current.has(payload.incidentId)
-      ) {
-        escalatedAlarmedIdsRef.current.add(payload.incidentId);
-        void playAlarm();
-      }
     };
 
     const onResponderAlert = (payload: FireRealtimePayload) => {
@@ -239,11 +201,6 @@ export function FireEscalationRealtime() {
 
       if (payload.incident && payload.incident.id) {
         upsertIncidentInStore(payload.incident);
-      }
-
-      if (!escalatedAlarmedIdsRef.current.has(payload.incidentId)) {
-        escalatedAlarmedIdsRef.current.add(payload.incidentId);
-        void playAlarm();
       }
 
       toast({
@@ -267,7 +224,7 @@ export function FireEscalationRealtime() {
       socket?.off("fire:responder_alert", onResponderAlert);
       socket?.disconnect();
     };
-  }, [isFireResponder, isOperator, pendingPrompt?.incidentId, playAlarm, toast]);
+  }, [isFireResponder, isMonitoringRoute, isOperator, pendingPrompt?.incidentId, toast]);
 
   const resolveConfirmation = useCallback(
     async (action: "confirm" | "reject") => {
@@ -293,7 +250,7 @@ export function FireEscalationRealtime() {
     [pendingPrompt, toast],
   );
 
-  if (!isOperator || !pendingPrompt) {
+  if (!isOperator || !pendingPrompt || isMonitoringRoute) {
     return null;
   }
 
@@ -310,8 +267,8 @@ export function FireEscalationRealtime() {
             High-confidence fire detected
           </DialogTitle>
           <DialogDescription>
-            Confirm action for incident {pendingPrompt.incidentId}. If no response is received in 10 seconds,
-            the system auto-escalates to fire responders.
+            Confirm action for incident {pendingPrompt.incidentId}. Escalation to responders happens only
+            after operator confirmation.
           </DialogDescription>
         </DialogHeader>
 
@@ -326,16 +283,22 @@ export function FireEscalationRealtime() {
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Countdown</span>
-            <Badge variant="outline" className="border-destructive/60 text-destructive">
-              <Siren className="mr-1 h-3.5 w-3.5" /> {secondsRemaining}s
-            </Badge>
+            {hasCountdown ? (
+              <Badge variant="outline" className="border-destructive/60 text-destructive">
+                <Siren className="mr-1 h-3.5 w-3.5" /> {secondsRemaining}s
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-warning/60 text-warning">
+                Manual confirmation required
+              </Badge>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <Button
             className="flex-1"
-            disabled={isSubmitting || secondsRemaining <= 0}
+            disabled={isSubmitting || (hasCountdown && (secondsRemaining || 0) <= 0)}
             onClick={() => {
               void resolveConfirmation("confirm");
             }}
@@ -345,7 +308,7 @@ export function FireEscalationRealtime() {
           <Button
             variant="outline"
             className="flex-1 border-warning/50 text-warning"
-            disabled={isSubmitting || secondsRemaining <= 0}
+            disabled={isSubmitting || (hasCountdown && (secondsRemaining || 0) <= 0)}
             onClick={() => {
               void resolveConfirmation("reject");
             }}
@@ -354,7 +317,7 @@ export function FireEscalationRealtime() {
           </Button>
         </div>
 
-        {secondsRemaining <= 0 ? (
+        {hasCountdown && (secondsRemaining || 0) <= 0 ? (
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <AlertTriangle className="h-3.5 w-3.5" />
             Escalating automatically...
