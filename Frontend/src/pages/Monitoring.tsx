@@ -131,6 +131,21 @@ const BOX_COLORS = [
 ];
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
+const isHttpCameraUrl = (value?: string) => /^https?:\/\//i.test((value || "").trim());
+
+const isLikelyHlsUrl = (value: string) => {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.includes(".m3u8") ||
+    normalized.includes("format=m3u8") ||
+    normalized.includes("type=hls")
+  );
+};
+
+const withCacheBuster = (url: string) => {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}t=${Date.now()}`;
+};
 
 const normalizeBbox = (detection: DetectionBox) => {
   const [x1, y1, third, fourth] = detection.bbox;
@@ -177,20 +192,22 @@ interface BrowserVideoDevice {
   label: string;
 }
 
+type BrowserFrameElement = HTMLVideoElement | HTMLImageElement;
+
 const SystemCameraStream = memo(function SystemCameraStream({
   deviceId,
-  onVideoElement,
+  onFrameElement,
 }: {
   deviceId?: string;
-  onVideoElement?: (element: HTMLVideoElement | null) => void;
+  onFrameElement?: (element: BrowserFrameElement | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const onVideoElementRef = useRef(onVideoElement);
+  const onFrameElementRef = useRef(onFrameElement);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    onVideoElementRef.current = onVideoElement;
-  }, [onVideoElement]);
+    onFrameElementRef.current = onFrameElement;
+  }, [onFrameElement]);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -218,7 +235,7 @@ const SystemCameraStream = memo(function SystemCameraStream({
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          onVideoElementRef.current?.(videoRef.current);
+          onFrameElementRef.current?.(videoRef.current);
         }
 
         setError(null);
@@ -231,7 +248,7 @@ const SystemCameraStream = memo(function SystemCameraStream({
 
     return () => {
       cancelled = true;
-      onVideoElementRef.current?.(null);
+      onFrameElementRef.current?.(null);
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
@@ -249,33 +266,210 @@ const SystemCameraStream = memo(function SystemCameraStream({
   return <video ref={videoRef} className="absolute inset-0 h-full w-full object-cover" autoPlay muted playsInline />;
 });
 
+const HttpCameraStream = memo(function HttpCameraStream({
+  streamUrl,
+  onFrameElement,
+}: {
+  streamUrl: string;
+  onFrameElement?: (element: BrowserFrameElement | null) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const onFrameElementRef = useRef(onFrameElement);
+  const [mode, setMode] = useState<"video" | "image">("video");
+  const [imageSrc, setImageSrc] = useState(streamUrl);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onFrameElementRef.current = onFrameElement;
+  }, [onFrameElement]);
+
+  useEffect(() => {
+    setMode("video");
+    setImageSrc(streamUrl);
+    setError(null);
+  }, [streamUrl]);
+
+  const switchToImageMode = useCallback(
+    (nextError?: string) => {
+      setMode("image");
+      setImageSrc(withCacheBuster(streamUrl));
+      if (nextError) {
+        setError(nextError);
+      }
+    },
+    [streamUrl],
+  );
+
+  useEffect(() => {
+    if (mode !== "video") {
+      onFrameElementRef.current?.(null);
+      return;
+    }
+
+    const video = videoRef.current;
+    if (!video) {
+      onFrameElementRef.current?.(null);
+      return;
+    }
+
+    onFrameElementRef.current?.(video);
+
+    let cancelled = false;
+    let hlsInstance: { destroy: () => void } | null = null;
+
+    const start = async () => {
+      const normalizedUrl = streamUrl.trim();
+      if (!normalizedUrl) {
+        switchToImageMode("Stream URL is empty.");
+        return;
+      }
+
+      if (isLikelyHlsUrl(normalizedUrl)) {
+        const canUseNativeHls = video.canPlayType("application/vnd.apple.mpegurl") !== "";
+        if (!canUseNativeHls) {
+          try {
+            const hlsModule = await import("hls.js");
+            if (cancelled) {
+              return;
+            }
+
+            const Hls = hlsModule.default;
+            if (Hls.isSupported()) {
+              const hls = new Hls({
+                enableWorker: true,
+                lowLatencyMode: true,
+              });
+
+              hlsInstance = hls;
+              hls.attachMedia(video);
+
+              hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+                hls.loadSource(normalizedUrl);
+              });
+
+              hls.on(Hls.Events.ERROR, (_event, data) => {
+                if (data?.fatal) {
+                  switchToImageMode("HLS playback failed. Trying MJPEG fallback.");
+                }
+              });
+
+              return;
+            }
+          } catch {
+            switchToImageMode("HLS playback is unavailable. Trying MJPEG fallback.");
+            return;
+          }
+        }
+      }
+
+      video.src = normalizedUrl;
+      video.load();
+      await video.play().catch(() => undefined);
+    };
+
+    void start();
+
+    return () => {
+      cancelled = true;
+      onFrameElementRef.current?.(null);
+      if (hlsInstance) {
+        hlsInstance.destroy();
+      }
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [mode, streamUrl, switchToImageMode]);
+
+  useEffect(() => {
+    if (mode !== "image") {
+      return;
+    }
+
+    const image = imageRef.current;
+    if (!image) {
+      onFrameElementRef.current?.(null);
+      return;
+    }
+
+    if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      onFrameElementRef.current?.(image);
+    }
+
+    return () => {
+      onFrameElementRef.current?.(null);
+    };
+  }, [imageSrc, mode]);
+
+  if (mode === "image") {
+    return (
+      <>
+        <img
+          ref={imageRef}
+          src={imageSrc}
+          alt="Camera stream"
+          className="absolute inset-0 h-full w-full object-cover"
+          crossOrigin="anonymous"
+          referrerPolicy="no-referrer"
+          onLoad={(event) => {
+            setError(null);
+            onFrameElementRef.current?.(event.currentTarget);
+          }}
+          onError={() => {
+            onFrameElementRef.current?.(null);
+            setError("Unable to render this HTTP stream in browser mode.");
+          }}
+        />
+        {error ? (
+          <div className="absolute inset-x-2 bottom-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white/85">
+            {error}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        className="absolute inset-0 h-full w-full object-cover"
+        crossOrigin="anonymous"
+        autoPlay
+        muted
+        playsInline
+        onLoadedData={() => setError(null)}
+        onError={() => switchToImageMode("Video playback failed. Trying MJPEG fallback.")}
+      />
+      {error ? (
+        <div className="absolute inset-x-2 bottom-2 rounded bg-black/60 px-2 py-1 text-[10px] text-white/85">
+          {error}
+        </div>
+      ) : null}
+    </>
+  );
+});
+
 const CameraViewport = memo(function CameraViewport({
   camera,
   liveDetections,
-  onSystemVideoElement,
+  onFrameElement,
 }: {
   camera: CameraEntity;
   liveDetections?: DetectionUpdateEvent;
-  onSystemVideoElement?: (element: HTMLVideoElement | null) => void;
+  onFrameElement?: (element: BrowserFrameElement | null) => void;
 }) {
   const sourceType = camera.sourceType || "RTSP";
   const isSystemCamera = sourceType === "SYSTEM";
-  const supportsBrowserPlayback =
-    !isSystemCamera && (camera.rtspUrl.startsWith("http://") || camera.rtspUrl.startsWith("https://"));
+  const streamUrl = typeof camera.rtspUrl === "string" ? camera.rtspUrl.trim() : "";
+  const supportsBrowserPlayback = !isSystemCamera && isHttpCameraUrl(streamUrl);
 
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg border border-border bg-muted/20">
       {isSystemCamera ? (
-        <SystemCameraStream deviceId={camera.deviceId} onVideoElement={onSystemVideoElement} />
+        <SystemCameraStream deviceId={camera.deviceId} onFrameElement={onFrameElement} />
       ) : supportsBrowserPlayback ? (
-        <video
-          className="absolute inset-0 h-full w-full object-cover"
-          src={camera.rtspUrl}
-          autoPlay
-          muted
-          playsInline
-          loop
-        />
+        <HttpCameraStream streamUrl={streamUrl} onFrameElement={onFrameElement} />
       ) : (
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,hsl(var(--card)),transparent_45%),radial-gradient(circle_at_80%_80%,hsl(var(--muted)),transparent_40%),linear-gradient(130deg,hsl(var(--background)),hsl(var(--card)))]" />
       )}
@@ -340,7 +534,7 @@ export default function MonitoringPage() {
   const [focusedCameraId, setFocusedCameraId] = useState<string | null>(null);
 
   const camerasRef = useRef<CameraEntity[]>([]);
-  const systemVideoElementsRef = useRef<Record<string, HTMLVideoElement>>({});
+  const cameraFrameElementsRef = useRef<Record<string, BrowserFrameElement>>({});
   const analysisInFlightRef = useRef<Set<string>>(new Set());
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastAnalyzeErrorAtRef = useRef(0);
@@ -469,13 +663,13 @@ export default function MonitoringPage() {
     camerasRef.current = cameras;
   }, [cameras]);
 
-  const bindSystemVideoElement = useCallback((cameraId: string, element: HTMLVideoElement | null) => {
+  const bindCameraFrameElement = useCallback((cameraId: string, element: BrowserFrameElement | null) => {
     if (element) {
-      systemVideoElementsRef.current[cameraId] = element;
+      cameraFrameElementsRef.current[cameraId] = element;
       return;
     }
 
-    delete systemVideoElementsRef.current[cameraId];
+    delete cameraFrameElementsRef.current[cameraId];
     analysisInFlightRef.current.delete(cameraId);
   }, []);
 
@@ -492,7 +686,8 @@ export default function MonitoringPage() {
         }
 
         const sourceType = camera.sourceType || "RTSP";
-        if (sourceType !== "SYSTEM" || camera.status !== "ONLINE") {
+        const supportsBrowserFrameCapture = sourceType === "SYSTEM" || isHttpCameraUrl(camera.rtspUrl);
+        if (!supportsBrowserFrameCapture) {
           continue;
         }
 
@@ -500,21 +695,41 @@ export default function MonitoringPage() {
           continue;
         }
 
-        const videoElement = systemVideoElementsRef.current[camera._id];
-        if (
-          !videoElement ||
-          videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-          videoElement.videoWidth <= 0 ||
-          videoElement.videoHeight <= 0
-        ) {
+        const frameElement = cameraFrameElementsRef.current[camera._id];
+        if (!frameElement) {
+          continue;
+        }
+
+        let sourceWidth = 0;
+        let sourceHeight = 0;
+
+        if (frameElement instanceof HTMLVideoElement) {
+          if (
+            frameElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+            frameElement.videoWidth <= 0 ||
+            frameElement.videoHeight <= 0
+          ) {
+            continue;
+          }
+
+          sourceWidth = frameElement.videoWidth;
+          sourceHeight = frameElement.videoHeight;
+        } else if (frameElement instanceof HTMLImageElement) {
+          if (!frameElement.complete || frameElement.naturalWidth <= 0 || frameElement.naturalHeight <= 0) {
+            continue;
+          }
+
+          sourceWidth = frameElement.naturalWidth;
+          sourceHeight = frameElement.naturalHeight;
+        } else {
           continue;
         }
 
         inFlight.add(camera._id);
 
         try {
-          const width = Math.min(640, videoElement.videoWidth);
-          const height = Math.max(1, Math.round((width * videoElement.videoHeight) / videoElement.videoWidth));
+          const width = Math.min(640, sourceWidth);
+          const height = Math.max(1, Math.round((width * sourceHeight) / sourceWidth));
 
           let canvas = captureCanvasRef.current;
           if (!canvas) {
@@ -530,7 +745,7 @@ export default function MonitoringPage() {
             continue;
           }
 
-          context.drawImage(videoElement, 0, 0, width, height);
+          context.drawImage(frameElement, 0, 0, width, height);
           const imageBase64 = canvas.toDataURL("image/jpeg", 0.72);
 
           await analyzeCameraFrame(camera._id, imageBase64);
@@ -538,9 +753,15 @@ export default function MonitoringPage() {
           const now = Date.now();
           if (now - lastAnalyzeErrorAtRef.current > 12000) {
             lastAnalyzeErrorAtRef.current = now;
+            const description =
+              error instanceof DOMException && error.name === "SecurityError"
+                ? "Browser blocked frame capture for this stream. Enable CORS on the camera gateway."
+                : error instanceof Error
+                  ? error.message
+                  : "Unexpected error";
             toast({
               title: "YOLO analysis temporarily unavailable",
-              description: error instanceof Error ? error.message : "Unexpected error",
+              description,
               variant: "destructive",
             });
           }
@@ -989,7 +1210,7 @@ export default function MonitoringPage() {
           const isSystemCamera = sourceType === "SYSTEM";
           const displaySourceType = isSystemCamera
             ? "SYSTEM"
-            : camera.rtspUrl?.startsWith("http://") || camera.rtspUrl?.startsWith("https://")
+            : isHttpCameraUrl(camera.rtspUrl)
             ? "HTTP"
             : "RTSP";
           const isFocused = focusedCameraId === camera._id;
@@ -1037,7 +1258,7 @@ export default function MonitoringPage() {
                   <CameraViewport
                     camera={camera}
                     liveDetections={overlay}
-                    onSystemVideoElement={(element) => bindSystemVideoElement(camera._id, element)}
+                    onFrameElement={(element) => bindCameraFrameElement(camera._id, element)}
                   />
 
                   {isFocused ? (
